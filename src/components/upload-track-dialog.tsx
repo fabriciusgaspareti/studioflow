@@ -33,7 +33,7 @@ interface UploadTrackDialogProps {
 }
 
 export function UploadTrackDialog({ isOpen: externalIsOpen, onOpenChange: externalOnOpenChange, onTrackUpload }: UploadTrackDialogProps = {}) {
-  const { addTrack } = useTracks();
+  const { addTrack, generateUploadUrl, updateTrackFileMutation } = useTracks();
   const { categories } = useCategories();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -62,55 +62,97 @@ export function UploadTrackDialog({ isOpen: externalIsOpen, onOpenChange: extern
       newErrors.categoryId = "Categoria é obrigatória";
     }
 
-    if (!formData.shortVersionFile) {
-      newErrors.shortVersionFile = "Arquivo da versão curta é obrigatório";
-    }
-
-    if (!formData.longVersionFile) {
-      newErrors.longVersionFile = "Arquivo da versão longa é obrigatório";
-    }
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = async () => {
-    if (!validateForm() || !user) return;
+  const resetForm = () => {
+    setFormData({
+      name: "",
+      categoryId: "",
+      shortVersionFile: null,
+      longVersionFile: null,
+    });
+    setErrors({});
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const sessionToken = localStorage.getItem('session_token');
+
+    if (!sessionToken) {
+      toast({
+        title: "Erro de Autenticação",
+        description: "Você precisa fazer login novamente.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!user) {
+      toast({
+        title: "Erro",
+        description: "Usuário não autenticado",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!validateForm()) {
+      return;
+    }
 
     setIsSubmitting(true);
+
     try {
-      const trackData = {
-        name: formData.name.trim(),
+      const newTrackId = await addTrack({
+        name: formData.name,
         categoryId: formData.categoryId as Id<"categories">,
-        createdBy: user._id,
-        shortVersionFile: formData.shortVersionFile!,
-        longVersionFile: formData.longVersionFile!,
+      });
+
+      if (!newTrackId) {
+        throw new Error("Falha ao obter o ID da nova faixa.");
+      }
+
+      const handleUpload = async (file: File, version: 'short' | 'long') => {
+        if (!file) return null;
+
+        const postUrl = await generateUploadUrl();
+
+        const result = await fetch(postUrl, {
+          method: "POST",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+
+        const { storageId } = await result.json();
+        return storageId;
       };
 
-      if (onTrackUpload) {
-        await onTrackUpload(trackData);
-      } else {
-        await addTrack(trackData);
+      const shortStorageId = await handleUpload(formData.shortVersionFile!, 'short');
+      const longStorageId = await handleUpload(formData.longVersionFile!, 'long');
+
+      if (shortStorageId || longStorageId) {
+        await updateTrackFileMutation({
+          trackId: newTrackId,
+          short: shortStorageId || undefined,
+          long: longStorageId || undefined,
+          sessionToken: sessionToken, // Adicionado para autenticação
+        });
       }
 
       toast({
-        title: "Faixa adicionada",
-        description: "A faixa foi adicionada com sucesso.",
+        title: "Sucesso",
+        description: "Faixa adicionada com sucesso!",
       });
-
-      // Reset form
-      setFormData({
-        name: "",
-        categoryId: "",
-        shortVersionFile: null,
-        longVersionFile: null,
-      });
-      setErrors({});
+      resetForm();
       setIsOpen(false);
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Erro ao adicionar faixa:', error);
       toast({
         title: "Erro",
-        description: "Erro ao adicionar faixa. Tente novamente.",
+        description: `Erro ao adicionar faixa: ${error.message}`,
         variant: "destructive",
       });
     } finally {
@@ -197,15 +239,20 @@ export function UploadTrackDialog({ isOpen: externalIsOpen, onOpenChange: extern
 
           <div className="space-y-2">
             <label htmlFor="short-version" className="text-sm font-medium">
-              Versão Curta
+              Versão Curta (MP3)
             </label>
             <Input
               id="short-version"
               type="file"
-              accept="audio/*"
+              accept="audio/mp3,audio/mpeg,.mp3"
               onChange={(e) => handleFileChange("shortVersionFile", e.target.files?.[0] || null)}
               disabled={isSubmitting}
             />
+            {formData.shortVersionFile && (
+              <p className="text-xs text-green-600">
+                Arquivo selecionado: {formData.shortVersionFile.name}
+              </p>
+            )}
             {errors.shortVersionFile && (
               <p className="text-sm text-red-500">{errors.shortVersionFile}</p>
             )}
@@ -213,15 +260,20 @@ export function UploadTrackDialog({ isOpen: externalIsOpen, onOpenChange: extern
 
           <div className="space-y-2">
             <label htmlFor="long-version" className="text-sm font-medium">
-              Versão Longa
+              Versão Longa (MP3)
             </label>
             <Input
               id="long-version"
               type="file"
-              accept="audio/*"
+              accept="audio/mp3,audio/mpeg,.mp3"
               onChange={(e) => handleFileChange("longVersionFile", e.target.files?.[0] || null)}
               disabled={isSubmitting}
             />
+            {formData.longVersionFile && (
+              <p className="text-xs text-green-600">
+                Arquivo selecionado: {formData.longVersionFile.name}
+              </p>
+            )}
             {errors.longVersionFile && (
               <p className="text-sm text-red-500">{errors.longVersionFile}</p>
             )}

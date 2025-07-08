@@ -1,10 +1,9 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { Id } from "./_generated/dataModel";
 
-// Função simples de hash (em produção, use bcrypt ou similar)
+// Função simples de hash
 function simpleHash(password: string): string {
-  // Esta é uma implementação básica - em produção use bcrypt
   let hash = 0;
   for (let i = 0; i < password.length; i++) {
     const char = password.charCodeAt(i);
@@ -257,5 +256,30 @@ export const addUser = mutation({
       email: args.email,
       role: args.role,
     };
+  },
+});
+
+// Adicionar esta função interna para verificar sessão
+export const getSessionByToken = internalQuery({
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    // Buscar sessão pelo token
+    const session = await ctx.db
+      .query("sessions")
+      .withIndex("by_token", (q) => q.eq("token", args.token))
+      .first();
+
+    if (!session) {
+      return null;
+    }
+
+    // Verificar se a sessão não expirou
+    if (session.expiresAt < Date.now()) {
+      // Remover sessão expirada
+      await ctx.db.delete(session._id);
+      return null;
+    }
+
+    return session;
   },
 });

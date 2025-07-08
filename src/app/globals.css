@@ -38,6 +38,7 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
+  
   .dark {
     --background: 261 15% 10%; /* Dark purple background */
     --foreground: 0 0% 93.3%;
@@ -78,7 +79,38 @@
   * {
     @apply border-border;
   }
+  
+  /* Corrigir problema da barra de rolagem que desloca o layout */
+  html {
+    overflow-y: scroll; /* Sempre reserva espaço para barra de rolagem vertical */
+    scrollbar-gutter: stable; /* Mantém espaço estável para a barra de rolagem */
+  }
+  
   body {
     @apply bg-background text-foreground;
+  }
+  
+  /* Estilizar a barra de rolagem para ficar mais discreta */
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.3);
+    border-radius: 4px;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+  }
+  
+  /* Para Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.3) transparent;
   }
 }

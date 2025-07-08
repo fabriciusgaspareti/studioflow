@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useAction } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../lib/convex";
 import { Id } from "../../convex/_generated/dataModel";
 
@@ -8,8 +8,8 @@ export interface Track {
   name: string;
   categoryId: Id<"categories">;
   versions: {
-    short: string;
-    long: string;
+    short?: string;
+    long?: string;
   };
   createdAt: number;
   createdBy: Id<"users">;
@@ -18,21 +18,33 @@ export interface Track {
 
 export const useTracks = () => {
   const tracks = useQuery(api.tracks.getTracks) || [];
-  const addTrackAction = useAction(api.tracks.addTrack);
+  const addTrackMutation = useMutation(api.tracks.addTrack);
   const deleteTrackMutation = useMutation(api.tracks.deleteTrack);
   const updateTrackMutation = useMutation(api.tracks.updateTrack);
-  
+  const generateUploadUrl = useMutation(api.tracks.generateUploadUrl);
+  const updateTrackFileMutation = useMutation(api.tracks.updateTrackFile);
+
   const addTrack = async (trackData: {
-    id: Id<"tracks">;
     name: string;
     categoryId: Id<"categories">;
   }) => {
     try {
-      await addTrackAction(trackData);
-      return true;
+      const sessionToken = localStorage.getItem('session_token');
+      
+      if (!sessionToken) {
+        throw new Error('No session token found');
+      }
+
+      const result = await addTrackMutation({
+        name: trackData.name,
+        categoryId: trackData.categoryId,
+        sessionToken: sessionToken,
+      });
+      
+      return result;
     } catch (error) {
-      console.error("Error adding track:", error);
-      return false;
+      console.error('❌ Erro ao adicionar faixa:', error);
+      throw error;
     }
   };
   
@@ -60,11 +72,15 @@ export const useTracks = () => {
     }
   };
   
+  // A função uploadFile foi removida, pois a lógica será movida para o componente
+
   return {
     tracks,
     loading: tracks === undefined,
     addTrack,
     updateTrack,
     deleteTrack,
+    generateUploadUrl, // Expondo a nova mutação
+    updateTrackFileMutation, // Expondo a mutação de atualização com o nome correto
   };
-}
+};

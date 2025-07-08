@@ -32,7 +32,7 @@ export function useAuth() {
     isLoggedIn,
     username,
     role,
-    user: currentUser, // ✅ Adicionando a propriedade user que estava faltando
+    user: currentUser,
     loading: loading || (sessionToken && currentUser === undefined),
     signIn: async (email: string, password: string) => {
       try {

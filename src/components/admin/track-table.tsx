@@ -30,7 +30,7 @@ import { Pencil, Trash2, Plus } from "lucide-react";
 import { Id } from "../../../convex/_generated/dataModel";
 
 export function TrackTable() {
-  const { tracks, deleteTrack } = useTracks();
+  const { tracks, deleteTrack, addTrack } = useTracks();
   const { user } = useAuth();
   const { toast } = useToast();
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -79,12 +79,22 @@ export function TrackTable() {
     setIsEditDialogOpen(true);
   };
 
-  const handleAddNewTrack = () => {
-    // Função chamada após upload bem-sucedido
-    toast({
-      title: "Sucesso!",
-      description: "Faixa adicionada com sucesso.",
-    });
+  const handleAddNewTrack = async (trackData: { name: string; categoryId: Id<"categories"> }) => {
+    try {
+      await addTrack(trackData);
+      toast({
+        title: "Sucesso!",
+        description: "Faixa adicionada com sucesso.",
+      });
+      setIsUploadOpen(false);
+    } catch (error: any) {
+      console.error('Erro ao adicionar faixa:', error);
+      toast({
+        title: "Erro",
+        description: error.message || "Erro ao adicionar faixa.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (

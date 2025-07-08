@@ -16,7 +16,6 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_token", ["token"]).index("by_user", ["userId"]),
   
-  // Nova tabela para categorias
   categories: defineTable({
     name: v.string(),
     description: v.optional(v.string()),
@@ -26,10 +25,10 @@ export default defineSchema({
   
   tracks: defineTable({
     name: v.string(),
-    categoryId: v.id("categories"), // Referência à categoria
+    categoryId: v.id("categories"),
     versions: v.object({
-      short: v.string(),
-      long: v.string(),
+      short: v.optional(v.string()),
+      long: v.optional(v.string()),
     }),
     createdAt: v.number(),
     createdBy: v.id("users"),

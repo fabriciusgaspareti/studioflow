@@ -119,7 +119,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("loadstart", handleLoadStart);
     };
-  }, [activeTrack, version]); // Re-attach listeners when track/version changes
+  }, [activeTrack, version]);
   
   const handleSelectTrack = (track: Track) => {
     if (activeTrack?._id !== track._id) {
