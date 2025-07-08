@@ -1,4 +1,5 @@
-// ... existing code ...
+import { mutation } from "./_generated/server";
+import { v } from "convex/values";
 
 // Atualizar track existente
 export const updateTrack = mutation({
