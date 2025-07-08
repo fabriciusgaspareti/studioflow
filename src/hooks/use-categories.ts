@@ -1,11 +1,21 @@
-// ... existing code ...
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../lib/convex";
+import { Id } from "../../convex/_generated/dataModel";
 
 export const useCategories = () => {
   const categories = useQuery(api.categories.getAll) || [];
   const createCategoryMutation = useMutation(api.categories.create);
   const deleteCategoryMutation = useMutation(api.categories.deleteCategory);
   
-  // ... existing createCategory function ...
+  const createCategory = async (category: string) => {
+    try {
+      const result = await createCategoryMutation({ category });
+      return result;
+    } catch (error) {
+      console.error('Error creating category:', error);
+      throw error;
+    }
+  };
   
   const deleteCategory = async (categoryId: Id<"categories">, createdBy: Id<"users">) => {
     try {

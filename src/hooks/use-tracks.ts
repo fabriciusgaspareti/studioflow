@@ -1,4 +1,6 @@
-// ... existing code ...
+import { useQuery, useMutation, useAction } from "convex/react";
+import { api } from "../lib/convex";
+import { Id } from "../../convex/_generated/dataModel";
 
 export const useTracks = () => {
   const tracks = useQuery(api.tracks.getTracks) || [];
@@ -6,7 +8,19 @@ export const useTracks = () => {
   const deleteTrackMutation = useMutation(api.tracks.deleteTrack);
   const updateTrackMutation = useMutation(api.tracks.updateTrack);
   
-  // ... existing addTrack function ...
+  const addTrack = async (trackData: {
+    id: Id<"tracks">;
+    name: string;
+    categoryId: Id<"categories">;
+  }) => {
+    try {
+      await addTrackAction(trackData);
+      return true;
+    } catch (error) {
+      console.error("Error adding track:", error);
+      return false;
+    }
+  };
   
   const updateTrack = async (trackData: {
     id: Id<"tracks">;
@@ -22,7 +36,15 @@ export const useTracks = () => {
     }
   };
   
-  // ... existing deleteTrack function ...
+  const deleteTrack = async (id: Id<"tracks">) => {
+    try {
+      await deleteTrackMutation(id);
+      return true;
+    } catch (error) {
+      console.error("Error deleting track:", error);
+      return false;
+    }
+  };
   
   return {
     tracks,
