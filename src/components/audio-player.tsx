@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import type { Track } from "@/lib/types";
-import { Music, Pause, Play, Volume2, VolumeX, ListMusic } from "lucide-react";
+import { Music, Pause, Play, Volume2, VolumeX, ListMusic, Loader2 } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +29,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const audioRef = useRef<HTMLAudioElement>(null);
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false); // Novo estado
   const [version, setVersion] = useState<Version>("short");
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -66,8 +67,9 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     
     // Set new source
     audio.src = activeTrack.versions[version];
+    setIsLoading(true); // Inicia o carregamento
     audio.load();
-    
+
     // Reset time states
     setCurrentTime(0);
     setDuration(0);
@@ -86,6 +88,10 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       setDuration(audio.duration || 0);
     };
     
+    const handleCanPlay = () => {
+      setIsLoading(false); // Finaliza o carregamento
+    };
+
     const handleEnded = () => {
       setIsPlaying(false);
       setCurrentTime(0);
@@ -99,6 +105,10 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       setIsPlaying(false);
     };
 
+    const handleWaiting = () => {
+      setIsLoading(true); // Mostra o loading se o buffer acabar
+    };
+
     const handleLoadStart = () => {
       setCurrentTime(0);
       setDuration(0);
@@ -106,17 +116,21 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    audio.addEventListener("canplay", handleCanPlay); // Novo listener
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
+    audio.addEventListener("waiting", handleWaiting); // Novo listener
     audio.addEventListener("loadstart", handleLoadStart);
 
     return () => {
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
+      audio.removeEventListener("canplay", handleCanPlay); // Limpa o listener
       audio.removeEventListener("ended", handleEnded);
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
+      audio.removeEventListener("waiting", handleWaiting); // Limpa o listener
       audio.removeEventListener("loadstart", handleLoadStart);
     };
   }, [activeTrack, version]);
@@ -183,7 +197,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
         className="max-w-[95vw] sm:max-w-lg rounded-lg"
         onInteractOutside={(event) => event.preventDefault()}
       >
-        <audio ref={audioRef} preload="metadata"></audio>
+        <audio ref={audioRef} preload="auto"></audio> {/* Alterado para auto */}
         <DialogHeader>
           <div className="flex flex-col sm:flex-row items-center text-center sm:text-left gap-4 mb-2">
             <div className="bg-primary/10 p-3 rounded-full">
@@ -259,8 +273,14 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
                 />
             </div>
             <div className="flex items-center justify-center">
-                <Button onClick={togglePlayPause} size="lg" className="h-16 w-16 rounded-full bg-accent hover:bg-accent/90" disabled={!activeTrack}>
-                    {isPlaying ? <Pause className="h-8 w-8" /> : <Play className="h-8 w-8 ml-1" />}
+                <Button onClick={togglePlayPause} size="lg" className="h-16 w-16 rounded-full bg-accent hover:bg-accent/90" disabled={!activeTrack || isLoading}>
+                    {isLoading ? (
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                    ) : isPlaying ? (
+                        <Pause className="h-8 w-8" />
+                    ) : (
+                        <Play className="h-8 w-8 ml-1" />
+                    )}
                     <span className="sr-only">{isPlaying ? "Pausar" : "Tocar"}</span>
                 </Button>
             </div>
