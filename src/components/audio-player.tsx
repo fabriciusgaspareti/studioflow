@@ -423,41 +423,26 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     // Atualizar estado imediatamente para feedback visual
     setVolume(newVolume);
     
-    // Debounce reduzido para aplicar ao elemento de áudio (reduz chiado)
-    if (volumeTimeoutRef.current) {
-      clearTimeout(volumeTimeoutRef.current);
-    }
-    
-    volumeTimeoutRef.current = setTimeout(() => {
-      if (audioRef.current) {
-        // Aplicar volume de forma mais direta e responsiva
-        const audio = audioRef.current;
-        const currentVolume = audio.volume;
-        const targetVolume = newVolume;
+    // Aplicar volume diretamente sem debounce para evitar chiado no mobile
+    if (audioRef.current) {
+      // Verificar se o áudio está em reprodução antes de alterar o volume
+      const audio = audioRef.current;
+      const wasPlaying = !audio.paused;
+      
+      try {
+        // Aplicar volume diretamente - mais estável no mobile
+        audio.volume = newVolume;
         
-        // Transição suave apenas para mudanças muito grandes
-        if (Math.abs(targetVolume - currentVolume) > 0.3) {
-          const steps = 3; // Reduzido de 5 para 3 steps
-          const stepSize = (targetVolume - currentVolume) / steps;
-          let step = 0;
-          
-          const smoothTransition = () => {
-            if (step < steps && audioRef.current) {
-              audioRef.current.volume = currentVolume + (stepSize * step);
-              step++;
-              setTimeout(smoothTransition, 5); // Reduzido de 10ms para 5ms
-            } else if (audioRef.current) {
-              audioRef.current.volume = targetVolume;
-            }
-          };
-          
-          smoothTransition();
-        } else {
-          // Para mudanças pequenas, aplicar diretamente
-          audio.volume = targetVolume;
+        // Se o áudio parou inesperadamente, tentar retomar
+        if (wasPlaying && audio.paused) {
+          audio.play().catch(error => {
+            console.warn('Erro ao retomar reprodução após mudança de volume:', error);
+          });
         }
+      } catch (error) {
+        console.warn('Erro ao aplicar volume:', error);
       }
-    }, 20); // Debounce reduzido de 50ms para 20ms
+    }
   };
 
   const toggleMute = () => {
@@ -598,9 +583,9 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
                 <Slider
                     value={[volume]}
                     max={1}
-                    step={0.005}  // ← REDUZIR ainda mais para transições ultra-suaves
+                    step={0.005}
                     onValueChange={handleVolumeChange}
-                    className="flex-1 sm:flex-none sm:w-24"
+                    className="w-16 sm:w-24" // ← Alterado: menor no mobile (w-16) e normal no desktop (sm:w-24)
                     aria-label="Controle de volume"
                     disabled={!activeTrack}
                 />
