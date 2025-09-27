@@ -28,7 +28,8 @@ interface AudioPlayerProps {
 export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const mediaSessionRef = useRef<boolean>(false); // ← Mover para aqui
+  const mediaSessionRef = useRef<boolean>(false);
+  const seekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -108,12 +109,18 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     };
     
     const handleLoadedMetadata = () => {
-      console.log('🎵 [DEBUG] Audio metadata loaded:', {
-        duration: audio.duration,
-        track: activeTrack?.name,
-        version,
-        timestamp: new Date().toISOString()
-      });
+      const DEBUG_AUDIO = process.env.NODE_ENV === 'development';
+      
+      // E substituir todos os console.log por:
+      if (DEBUG_AUDIO) {
+        console.log('🎵 [DEBUG] Audio metadata loaded:', {
+          duration: audio.duration,
+          track: activeTrack?.name,
+          version,
+          timestamp: new Date().toISOString()
+        });
+        setDuration(audio.duration || 0);
+      };
       setDuration(audio.duration || 0);
     };
     
@@ -472,19 +479,14 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
-    
-    // Atualizar estado imediatamente para feedback visual
     setVolume(newVolume);
     
     if (audioRef.current) {
       const audio = audioRef.current;
-      
-      // 🆕 SOLUÇÃO: Transição suave de volume para evitar estalos
       const currentVol = audio.volume;
       const volumeDiff = Math.abs(newVolume - currentVol);
       
       if (volumeDiff > 0.1) {
-        // Para mudanças grandes: transição suave em 3 passos
         const steps = 3;
         const stepSize = (newVolume - currentVol) / steps;
         
@@ -493,22 +495,37 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             if (audioRef.current) {
               audioRef.current.volume = currentVol + (stepSize * i);
             }
-          }, i * 15); // 15ms entre cada passo = 45ms total
+          }, i * 15);
         }
       } else {
-        // Para mudanças pequenas: aplicar diretamente
         audio.volume = newVolume;
       }
     }
   };
 
   const toggleMute = () => {
-      const newVolume = volume > 0 ? 0 : 1;
-      if (audioRef.current) {
-          audioRef.current.volume = newVolume;
-          setVolume(newVolume);
-      }
-  }
+    const newVolume = volume > 0 ? 0 : 1;
+    if (audioRef.current) {
+      audioRef.current.volume = newVolume;
+      setVolume(newVolume);
+    }
+  };
+
+  const handleTimeSeekDebounced = (value: number[]) => {
+    const newTime = value[0];
+    
+    // Atualizar UI imediatamente
+    setCurrentTime(newTime);
+    
+    // Debounce da mudança real de tempo
+    if (seekTimeoutRef.current) {
+      clearTimeout(seekTimeoutRef.current);
+    }
+    
+    seekTimeoutRef.current = setTimeout(() => {
+      handleTimeSeek(value);
+    }, 100); // 100ms de debounce
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -585,11 +602,12 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             {/* 🆕 NOVO: Barra de progresso com indicador de buffer */}
             <div className="relative">
               {/* Slider original com buffer como background */}
+
               <Slider
                 value={[currentTime]}
                 max={duration || 1}
-                step={0.1} // ← Mudança: de 1 para 0.1 (mais suave)
-                onValueChange={handleTimeSeekDebounced} // ← Mudança: versão com debounce
+                step={0.1}
+                onValueChange={handleTimeSeekDebounced} // ← ERRO: Função não definida
                 disabled={!duration}
                 aria-label="Progresso da faixa"
                 className="relative z-10"
@@ -676,24 +694,4 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       </DialogContent>
     </Dialog>
   );
-}
-
-  // 🆕 ADICIONADO: Refs para debounce
-  const seekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // 🆕 VERSÃO MELHORADA: handleTimeSeek com debounce
-  const handleTimeSeekDebounced = (value: number[]) => {
-    const newTime = value[0];
-    
-    // Atualizar UI imediatamente
-    setCurrentTime(newTime);
-    
-    // Debounce da mudança real de tempo
-    if (seekTimeoutRef.current) {
-      clearTimeout(seekTimeoutRef.current);
-    }
-    
-    seekTimeoutRef.current = setTimeout(() => {
-      handleTimeSeek(value);
-    }, 100); // 100ms de debounce
-  };
+} // ✅ Componente termina aqui - sem código adicional
