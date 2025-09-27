@@ -295,45 +295,72 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     // 🆕 NOVO: Buffer progress tracking
     // 🔧 MELHORADO: Buffer inteligente com preload agressivo
     // 🆕 MELHORADO: Buffer contínuo e inteligente
+    // 🔧 MELHORADO: Buffer mais agressivo para faixas longas
+    // 🔧 OTIMIZADO: handleProgress para carregamento independente
     const handleProgress = () => {
-      if (audio.buffered.length > 0) {
-        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
-        const bufferPercent = duration > 0 ? (bufferedEnd / duration) * 100 : 0;
-        setBufferProgress(bufferPercent);
+      const audio = audioRef.current;
+      if (!audio || audio.buffered.length === 0) return;
+      
+      const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+      const bufferPercent = duration > 0 ? (bufferedEnd / duration) * 100 : 0;
+      setBufferProgress(bufferPercent);
+      
+      // 🚀 CARREGAMENTO AGRESSIVO INDEPENDENTE DA POSIÇÃO
+      if (bufferPercent < 99 && duration > 0) {
+        // Sempre tentar carregar mais, independente da posição atual
+        const currentTime = audio.currentTime;
         
-        // 🆕 BUFFER CONTÍNUO: Sempre manter 10% à frente
-        const bufferAhead = bufferedEnd - currentTime;
-        const targetBufferAhead = duration * 0.1; // 10% da duração total
-        const optimalBufferAhead = duration * 0.15; // 15% ideal para margem
+        // Múltiplos seeks simultâneos para diferentes partes do arquivo
+        const aggressiveTargets = [
+          Math.min(bufferedEnd + 45, duration - 1),
+          Math.min(duration * 0.3, duration - 1),
+          Math.min(duration * 0.6, duration - 1),
+          Math.min(duration * 0.9, duration - 1)
+        ];
         
-        // 🆕 Forçar carregamento contínuo sem pausar
-        if (bufferAhead < targetBufferAhead && duration > 0) {
-          // Não pausar o áudio - apenas ajustar configurações de rede
-          if (audio.networkState === audio.NETWORK_IDLE) {
-            // Forçar mais carregamento
-            const currentSrc = audio.src;
-            audio.preload = 'auto';
-            if (audio.src !== currentSrc) {
-              audio.src = currentSrc;
-            }
+        aggressiveTargets.forEach((target, index) => {
+          if (target > bufferedEnd) {
+            setTimeout(() => {
+              if (audioRef.current && audioRef.current.currentTime === currentTime) {
+                audioRef.current.currentTime = target;
+                setTimeout(() => {
+                  if (audioRef.current) {
+                    audioRef.current.currentTime = currentTime;
+                  }
+                }, 8); // Seek ultra-rápido
+              }
+            }, index * 15);
           }
-          
-          setConnectionQuality('poor');
-        } else if (bufferAhead >= optimalBufferAhead) {
-          setConnectionQuality('good');
-        }
-        
-        // 🆕 Monitoramento de buffer crítico
-        if (bufferPercent < 5 && isPlaying && currentTime > 5) {
-          setConnectionQuality('poor');
-          setStatusMessage('Conexão instável');
-        } else if (bufferPercent > 20) {
-          setStatusMessage(null);
-        }
+        });
+      }
+      
+      // Status visual melhorado
+      if (bufferPercent < 100) {
+        setStatusMessage(`🔄 Carregando: ${Math.round(bufferPercent)}%`);
+      } else {
+        setStatusMessage('✅ Arquivo totalmente carregado!');
+        setTimeout(() => setStatusMessage(null), 2000);
       }
     };
     
-    // 🆕 NOVO: Função para forçar preload agressivo
+    // 🔧 CORRIGIDO: TimeUpdate simplificado
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      
+      // Detecção de travamento simples
+      const now = Date.now();
+      if (Math.abs(audio.currentTime - lastBufferTime) < 0.1 && isPlaying) {
+        if (now - lastBufferTime > 3000) {
+          setIsBuffering(true);
+          setConnectionQuality('poor');
+        }
+      } else {
+        setLastBufferTime(now);
+        setIsBuffering(false);
+      }
+    };
+    
+    // 🔧 CORRIGIDO: Preload consistente no track change
     const forcePreload = () => {
       const audio = audioRef.current;
       if (!audio || !activeTrack) return;
@@ -346,52 +373,10 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
         audio.load();
       }
     };
-    
-    // 🔧 MELHORADO: handleTimeUpdate com detecção de buffer
-    // 🆕 MELHORADO: TimeUpdate com buffer contínuo
-    const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-      
-      // 🆕 Verificar buffer contínuo a cada segundo
-      if (audio.buffered.length > 0) {
-        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
-        const bufferAhead = bufferedEnd - audio.currentTime;
-        const targetBuffer = duration * 0.1; // 10% à frente
-        
-        // Se buffer está baixo, forçar mais carregamento
-        if (bufferAhead < targetBuffer && isPlaying && duration > 0) {
-          // Usar técnica de range request para carregar mais
-          if (audio.networkState !== audio.NETWORK_LOADING) {
-            const nextPosition = audio.currentTime + targetBuffer;
-            if (nextPosition < duration) {
-              // Simular seek para forçar carregamento
-              const originalTime = audio.currentTime;
-              audio.currentTime = Math.min(nextPosition, duration - 1);
-              setTimeout(() => {
-                if (audio.currentTime !== originalTime) {
-                  audio.currentTime = originalTime;
-                }
-              }, 50);
-            }
-          }
-        }
-      }
-      
-      // Detecção de travamento sem pausar
-      const now = Date.now();
-      if (Math.abs(audio.currentTime - lastBufferTime) < 0.1 && isPlaying) {
-        if (now - lastBufferTime > 3000) {
-          setIsBuffering(true);
-          setConnectionQuality('poor');
-          setStatusMessage('Conexão instável - recarregando buffer...');
-          forcePreload(); // Tentar forçar mais buffer
-        }
-      } else {
-        setLastBufferTime(now);
-        setIsBuffering(false);
-      }
-    };
-    
+
+    // 🔧 REMOVIDO: Segunda definição duplicada de handleTimeUpdate (linhas 358-408)
+    // A versão corrigida já existe na linha 330
+
     const handleSuspend = () => {
       // 🆕 OTIMIZAÇÃO: Não preocupar usuário com suspend normal
     };
@@ -595,6 +580,305 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       audio.addEventListener('loadeddata', handleLoadedData);
     }
   };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={onOpenChange}>
+      <DialogContent 
+        className="max-w-[95vw] sm:max-w-lg rounded-lg"
+        onInteractOutside={(event) => event.preventDefault()}
+      >
+        
+        <audio
+          ref={audioRef}
+          preload="auto"
+          crossOrigin="anonymous"
+          // 🆕 OTIMIZAÇÃO: Configurações para buffer contínuo
+          style={{
+            transform: 'translateZ(0)',
+            willChange: 'auto'
+          }}
+        />
+        <DialogHeader>
+          <div className="flex flex-col sm:flex-row items-center text-center sm:text-left gap-4 mb-2">
+            <div className="bg-primary/10 p-3 rounded-full">
+              <ListMusic className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg sm:text-xl">{categoryName}</DialogTitle>
+              <DialogDescription>
+                Selecione uma faixa da lista para tocar.
+              </DialogDescription>
+            </div>
+          </div>
+        </DialogHeader>
+        
+        <ScrollArea className="h-48 w-full rounded-md border">
+            <div className="p-2">
+            {tracks.map((track) => (
+                <div
+                    key={track._id}
+                    onClick={() => handleSelectTrack(track)}
+                    className={cn("flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-muted",
+                        activeTrack?._id === track._id && "bg-muted font-semibold"
+                    )}
+                >
+                    <div className="flex items-center gap-2">
+                        {activeTrack?._id === track._id && isPlaying && (
+                            <Music className="h-4 w-4 text-primary animate-pulse" />
+                        )}
+                        <span>{track.name}</span>
+                    </div>
+                </div>
+            ))}
+            </div>
+        </ScrollArea>
+
+        {activeTrack ? (
+        <div className="space-y-4 pt-4">
+            <div className="flex flex-col sm:flex-row justify-center gap-2 sm:gap-4">
+              <Button 
+                variant={version === 'short' ? 'default' : 'outline'} 
+                onClick={() => changeVersion('short')}
+                disabled={!activeTrack.versions.short}
+              >
+                Versão Curta
+              </Button>
+              <Button 
+                variant={version === 'long' ? 'default' : 'outline'} 
+                onClick={() => changeVersion('long')}
+                disabled={!activeTrack.versions.long}
+              >
+                Versão Longa
+              </Button>
+            </div>
+            
+            {/* 🆕 NOVO: Barra de progresso com buffer visual - ALTURA AUMENTADA PARA MOBILE */}
+            <div className="relative space-y-2">
+              {/* Buffer indicator com gradiente - altura aumentada */}
+              <div className="w-full h-4 sm:h-3 bg-secondary rounded-full overflow-hidden relative">
+                {/* Buffer de fundo (total carregado) */}
+                <div 
+                  className="h-full bg-muted/40 transition-all duration-300"
+                  style={{ width: `${bufferProgress}%` }}
+                />
+                
+                {/* Buffer de preload (10% à frente da posição atual) */}
+                <div 
+                  className="h-full bg-primary/20 transition-all duration-300 absolute top-0"
+                  style={{ 
+                    left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                    width: `${duration > 0 ? Math.min(10, (bufferProgress - (currentTime / duration) * 100)) : 0}%`
+                  }}
+                />
+                
+                {/* Posição atual (barra de tempo) */}
+                <div 
+                  className="h-full bg-primary transition-all duration-150 absolute top-0 z-10"
+                  style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+                
+                {/* Indicador de posição atual - mais visível */}
+                <div 
+                  className="absolute top-0 w-1.5 sm:w-1 h-full bg-primary-foreground shadow-lg transition-all duration-150 z-20"
+                  style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+              </div>
+              
+              {/* Slider principal - área de toque aumentada para mobile */}
+              <Slider
+                value={[currentTime]}
+                max={duration || 1}
+                step={0.1}
+                onValueChange={handleTimeSeekDebounced}
+                disabled={!duration}
+                aria-label="Progresso da faixa"
+                className="w-full opacity-0 absolute top-0 h-4 sm:h-3 cursor-pointer"
+              />
+              
+              {/* Informações do buffer */}
+              {duration > 0 && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Buffer: {Math.round(bufferProgress)}%</span>
+                  <span>
+                    À frente: {audioRef.current?.buffered.length > 0 
+                      ? Math.max(0, Math.round(audioRef.current.buffered.end(audioRef.current.buffered.length - 1) - currentTime))
+                      : 0}s
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>{formatTime(currentTime)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-center text-muted-foreground py-8">Selecione uma faixa para começar.</div>
+        )}
+        
+        <DialogFooter className="flex-col sm:flex-row sm:justify-between items-center w-full pt-4 gap-4">
+            {/* 🆕 NOVO: Indicador de status simplificado */}
+            {connectionQuality !== 'unknown' && (
+              <div className="w-full text-center text-sm bg-muted/50 p-2 rounded-md">
+                <div className="flex items-center justify-center gap-2">
+                  {isRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {isBuffering && !isRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
+                  
+                  {/* Ícone de conexão */}
+                  {connectionQuality === 'poor' && (
+                    <WifiOff className="h-4 w-4 text-yellow-500" title="Conexão instável" />
+                  )}
+                  {connectionQuality === 'good' && (
+                    <Wifi className="h-4 w-4 text-green-500" title="Conexão estável" />
+                  )}
+                  
+                  <span className={cn(
+                    connectionQuality === 'poor' ? 'text-yellow-600' : 'text-green-600'
+                  )}>
+                    {connectionQuality === 'good' ? 'Conexão estável' : 
+                     connectionQuality === 'poor' ? 'Conexão instável' : 'Sem conexão'}
+                  </span>
+                </div>
+              </div>
+            )}
+            
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+                 <Button onClick={toggleMute} variant="ghost" size="icon" disabled={!activeTrack}>
+                    {volume > 0 ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5 text-destructive" />}
+                    <span className="sr-only">Mudo</span>
+                </Button>
+                <Slider
+                    value={[volume]}
+                    max={1}
+                    step={0.005}
+                    onValueChange={handleVolumeChange}
+                    className="w-16 sm:w-24"
+                    aria-label="Controle de volume"
+                    disabled={!activeTrack}
+                />
+            </div>
+            
+            <div className="flex items-center justify-center gap-2">
+                {/* 🆕 NOVO: Botão de retry manual */}
+                {showRetryButton && (
+                  <Button onClick={handleManualRetry} variant="outline" size="sm" disabled={isRetrying}>
+                    {isRetrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Tentar Novamente'}
+                  </Button>
+                )}
+                
+                <Button 
+                  onClick={togglePlayPause} 
+                  size="lg" 
+                  className="h-16 w-16 rounded-full bg-accent hover:bg-accent/90" 
+                  disabled={!activeTrack || (isLoading && !isRetrying)}
+                >
+                    {(isLoading && !isRetrying) ? (
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                    ) : isRetrying ? (
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                    ) : isPlaying ? (
+                        <Pause className="h-8 w-8" />
+                    ) : (
+                        <Play className="h-8 w-8 ml-1" />
+                    )}
+                    <span className="sr-only">
+                        {isRetrying ? "Reconectando..." : isPlaying ? "Pausar" : "Tocar"}
+                    </span>
+                </Button>
+            </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // 🚀 NOVO: Carregamento contínuo imediato (independente da reprodução)
+  useEffect(() => {
+    if (!isOpen || !activeTrack) return;
+    
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    // Iniciar carregamento imediatamente quando a faixa carrega
+    const startImmediateLoading = () => {
+      // Configuração máxima de preload
+      audio.preload = 'auto';
+      
+      // 🚀 CARREGAMENTO CONTÍNUO DESDE O INÍCIO
+      const continuousLoader = setInterval(() => {
+        if (audio.buffered.length > 0 && duration > 0) {
+          const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+          const bufferPercent = (bufferedEnd / duration) * 100;
+          
+          // Carregar continuamente até 100%, independente da posição atual
+          if (bufferPercent < 100) {
+            const currentTime = audio.currentTime;
+            
+            // 🎯 ESTRATÉGIA: Seeks progressivos para forçar download completo
+            const loadTargets = [
+              Math.min(bufferedEnd + 30, duration - 1),  // 30s à frente do buffer
+              Math.min(bufferedEnd + 60, duration - 1),  // 1min à frente
+              Math.min(duration * 0.25, duration - 1),   // 25% do arquivo
+              Math.min(duration * 0.5, duration - 1),    // 50% do arquivo
+              Math.min(duration * 0.75, duration - 1),   // 75% do arquivo
+              duration - 2                               // Quase o final
+            ];
+            
+            // Executar seeks em sequência rápida
+            loadTargets.forEach((target, index) => {
+              if (target > bufferedEnd) {
+                setTimeout(() => {
+                  if (audioRef.current) {
+                    audioRef.current.currentTime = target;
+                    // Retornar à posição original muito rapidamente
+                    setTimeout(() => {
+                      if (audioRef.current) {
+                        audioRef.current.currentTime = currentTime;
+                      }
+                    }, 10); // Seek ultra-rápido: 10ms
+                  }
+                }, index * 20); // Seeks escalonados a cada 20ms
+              }
+            });
+            
+            // Forçar reload se necessário
+            if (audio.networkState === audio.NETWORK_IDLE) {
+              setTimeout(() => {
+                if (audioRef.current) {
+                  audioRef.current.load();
+                  audioRef.current.currentTime = currentTime;
+                }
+              }, 200);
+            }
+          }
+        }
+      }, 500); // 🚀 MUITO FREQUENTE: A cada 500ms
+      
+      return continuousLoader;
+    };
+
+    // Iniciar carregamento assim que os metadados estiverem prontos
+    const handleLoadedMetadata = () => {
+      const loader = startImmediateLoading();
+      
+      // Limpar quando o componente for desmontado
+      return () => {
+        if (loader) clearInterval(loader);
+      };
+    };
+
+    // Se já tem metadados, iniciar imediatamente
+    if (audio.readyState >= 1) {
+      const cleanup = handleLoadedMetadata();
+      return cleanup;
+    } else {
+      // Aguardar metadados e então iniciar
+      audio.addEventListener('loadedmetadata', handleLoadedMetadata);
+      return () => {
+        audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      };
+    }
+  }, [isOpen, activeTrack, duration]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
