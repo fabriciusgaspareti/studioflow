@@ -405,8 +405,16 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
   const handleVolumeChange = (value: number[]) => {
       if (audioRef.current) {
-          audioRef.current.volume = value[0];
+          // Aplicar o volume imediatamente para feedback visual
           setVolume(value[0]);
+          
+          // Debounce para aplicar ao elemento audio
+          clearTimeout(volumeTimeoutRef.current);
+          volumeTimeoutRef.current = setTimeout(() => {
+              if (audioRef.current) {
+                  audioRef.current.volume = value[0];
+              }
+          }, 10);
       }
   }
 
@@ -548,7 +556,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
                 <Slider
                     value={[volume]}
                     max={1}
-                    step={0.05}
+                    step={0.01}  // ← CORREÇÃO: Step menor para transições suaves
                     onValueChange={handleVolumeChange}
                     className="flex-1 sm:flex-none sm:w-24"
                     aria-label="Controle de volume"
