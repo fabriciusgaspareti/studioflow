@@ -26,8 +26,10 @@ interface AudioPlayerProps {
 }
 
 export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: AudioPlayerProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null); // ← ADICIONAR esta linha
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mediaSessionRef = useRef<boolean>(false); // ← Mover para aqui
+  
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -36,14 +38,11 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
   const [lastError, setLastError] = useState<string | null>(null);
-  // 🆕 NOVOS: Estados para retry automático
   const [retryCount, setRetryCount] = useState(0);
   const [isRetrying, setIsRetrying] = useState(false);
-  // 🆕 ETAPA 4: Estados para UX e feedback visual
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'poor' | 'unknown'>('unknown');
   const [showRetryButton, setShowRetryButton] = useState(false);
-  // 🆕 NOVO: Estado para controle do buffer visual
   const [bufferProgress, setBufferProgress] = useState(0);
   
   // Reset when dialog opens/closes
@@ -420,11 +419,45 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
+    
+    // Atualizar estado imediatamente para feedback visual
     setVolume(newVolume);
     
-    if (audioRef.current) {
-      audioRef.current.volume = newVolume;
+    // Debounce reduzido para aplicar ao elemento de áudio (reduz chiado)
+    if (volumeTimeoutRef.current) {
+      clearTimeout(volumeTimeoutRef.current);
     }
+    
+    volumeTimeoutRef.current = setTimeout(() => {
+      if (audioRef.current) {
+        // Aplicar volume de forma mais direta e responsiva
+        const audio = audioRef.current;
+        const currentVolume = audio.volume;
+        const targetVolume = newVolume;
+        
+        // Transição suave apenas para mudanças muito grandes
+        if (Math.abs(targetVolume - currentVolume) > 0.3) {
+          const steps = 3; // Reduzido de 5 para 3 steps
+          const stepSize = (targetVolume - currentVolume) / steps;
+          let step = 0;
+          
+          const smoothTransition = () => {
+            if (step < steps && audioRef.current) {
+              audioRef.current.volume = currentVolume + (stepSize * step);
+              step++;
+              setTimeout(smoothTransition, 5); // Reduzido de 10ms para 5ms
+            } else if (audioRef.current) {
+              audioRef.current.volume = targetVolume;
+            }
+          };
+          
+          smoothTransition();
+        } else {
+          // Para mudanças pequenas, aplicar diretamente
+          audio.volume = targetVolume;
+        }
+      }
+    }, 20); // Debounce reduzido de 50ms para 20ms
   };
 
   const toggleMute = () => {
@@ -565,7 +598,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
                 <Slider
                     value={[volume]}
                     max={1}
-                    step={0.01}  // ← CORREÇÃO: Step menor para transições suaves
+                    step={0.005}  // ← REDUZIR ainda mais para transições ultra-suaves
                     onValueChange={handleVolumeChange}
                     className="flex-1 sm:flex-none sm:w-24"
                     aria-label="Controle de volume"
@@ -599,4 +632,3 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     </Dialog>
   );
 }
- 
