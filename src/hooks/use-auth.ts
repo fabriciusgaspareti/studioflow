@@ -7,13 +7,21 @@ import { useState, useEffect } from "react";
 export function useAuth() {
   const [sessionToken, setSessionToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isClient, setIsClient] = useState(false);
 
-  // Carregar token da sessão do localStorage
+  // 🆕 SOLUÇÃO: Verificar se estamos no cliente
   useEffect(() => {
-    const token = localStorage.getItem('session_token');
-    setSessionToken(token);
-    setLoading(false);
+    setIsClient(true);
   }, []);
+
+  // 🆕 SOLUÇÃO: Carregar token apenas no cliente
+  useEffect(() => {
+    if (isClient) {
+      const token = localStorage.getItem('session_token');
+      setSessionToken(token);
+      setLoading(false);
+    }
+  }, [isClient]);
 
   // Buscar dados do usuário baseado no token de sessão
   const currentUser = useQuery(
@@ -38,7 +46,9 @@ export function useAuth() {
       try {
         const result = await signInMutation({ email, password });
         if (result.success && result.sessionToken) {
-          localStorage.setItem('session_token', result.sessionToken);
+          if (typeof window !== 'undefined') { // 🆕 SOLUÇÃO: Verificar se window existe
+            localStorage.setItem('session_token', result.sessionToken);
+          }
           setSessionToken(result.sessionToken);
           return true;
         }
@@ -48,12 +58,14 @@ export function useAuth() {
         return false;
       }
     },
-    logout: async () => {
+    signOut: async () => {
       try {
         if (sessionToken) {
           await signOutMutation({ sessionToken });
         }
-        localStorage.removeItem('session_token');
+        if (typeof window !== 'undefined') { // 🆕 SOLUÇÃO: Verificar se window existe
+          localStorage.removeItem('session_token');
+        }
         setSessionToken(null);
         return true;
       } catch (error) {
