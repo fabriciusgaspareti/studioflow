@@ -388,13 +388,42 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     const audio = audioRef.current;
     if (!audio) return;
     
+    // 🆕 SOLUÇÃO: Verificar estado antes de alternar
     if (isPlaying) {
-      audio.pause();
+      // 🆕 SOLUÇÃO: Fade out suave antes de pausar
+      const originalVolume = audio.volume;
+      const fadeSteps = 5;
+      const fadeTime = 100; // 100ms total
+      
+      for (let i = fadeSteps; i >= 0; i--) {
+        setTimeout(() => {
+          if (audioRef.current) {
+            audioRef.current.volume = (originalVolume * i) / fadeSteps;
+            if (i === 0) {
+              audioRef.current.pause();
+              audioRef.current.volume = originalVolume; // Restaurar volume
+            }
+          }
+        }, (fadeSteps - i) * (fadeTime / fadeSteps));
+      }
     } else {
-      audio.play().catch(e => {
-        console.error("Error playing audio:", e);
-        setIsPlaying(false);
-      });
+      // 🆕 SOLUÇÃO: Verificar se áudio está pronto antes de tocar
+      if (audio.readyState >= 2) { // HAVE_CURRENT_DATA
+        audio.play().catch(e => {
+          console.error("Error playing audio:", e);
+          setIsPlaying(false);
+        });
+      } else {
+        // Aguardar carregamento
+        const handleCanPlay = () => {
+          audio.play().catch(e => {
+            console.error("Error playing audio:", e);
+            setIsPlaying(false);
+          });
+          audio.removeEventListener('canplay', handleCanPlay);
+        };
+        audio.addEventListener('canplay', handleCanPlay);
+      }
     }
   };
   
@@ -405,8 +434,32 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
   const handleTimeSeek = (value: number[]) => {
     if (audioRef.current && activeTrack && duration > 0) {
-      audioRef.current.currentTime = value[0];
-      setCurrentTime(value[0]);
+      const audio = audioRef.current;
+      const newTime = value[0];
+      const wasPlaying = !audio.paused;
+      
+      // 🆕 SOLUÇÃO: Pausar temporariamente para evitar estalos
+      if (wasPlaying) {
+        audio.pause();
+      }
+      
+      // 🆕 SOLUÇÃO: Aguardar um frame antes de mudar o tempo
+      requestAnimationFrame(() => {
+        if (audioRef.current) {
+          audioRef.current.currentTime = newTime;
+          setCurrentTime(newTime);
+          
+          // 🆕 SOLUÇÃO: Retomar reprodução após pequeno delay
+          if (wasPlaying) {
+            setTimeout(() => {
+              if (audioRef.current && !audioRef.current.paused) {
+                return; // Já está tocando
+              }
+              audioRef.current?.play().catch(console.warn);
+            }, 50); // 50ms de delay para estabilizar
+          }
+        }
+      });
     }
   };
 
@@ -423,24 +476,28 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     // Atualizar estado imediatamente para feedback visual
     setVolume(newVolume);
     
-    // Aplicar volume diretamente sem debounce para evitar chiado no mobile
     if (audioRef.current) {
-      // Verificar se o áudio está em reprodução antes de alterar o volume
       const audio = audioRef.current;
-      const wasPlaying = !audio.paused;
       
-      try {
-        // Aplicar volume diretamente - mais estável no mobile
-        audio.volume = newVolume;
+      // 🆕 SOLUÇÃO: Transição suave de volume para evitar estalos
+      const currentVol = audio.volume;
+      const volumeDiff = Math.abs(newVolume - currentVol);
+      
+      if (volumeDiff > 0.1) {
+        // Para mudanças grandes: transição suave em 3 passos
+        const steps = 3;
+        const stepSize = (newVolume - currentVol) / steps;
         
-        // Se o áudio parou inesperadamente, tentar retomar
-        if (wasPlaying && audio.paused) {
-          audio.play().catch(error => {
-            console.warn('Erro ao retomar reprodução após mudança de volume:', error);
-          });
+        for (let i = 1; i <= steps; i++) {
+          setTimeout(() => {
+            if (audioRef.current) {
+              audioRef.current.volume = currentVol + (stepSize * i);
+            }
+          }, i * 15); // 15ms entre cada passo = 45ms total
         }
-      } catch (error) {
-        console.warn('Erro ao aplicar volume:', error);
+      } else {
+        // Para mudanças pequenas: aplicar diretamente
+        audio.volume = newVolume;
       }
     }
   };
@@ -461,8 +518,14 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       >
         <audio
           ref={audioRef}
-          preload="auto"
+          preload="metadata" // ← Mudança: de "auto" para "metadata"
           crossOrigin="anonymous"
+          // 🆕 ADICIONADO: Configurações para reduzir estalos
+          style={{
+            // Forçar aceleração de hardware quando disponível
+            transform: 'translateZ(0)',
+            willChange: 'auto'
+          }}
         />
         <DialogHeader>
           <div className="flex flex-col sm:flex-row items-center text-center sm:text-left gap-4 mb-2">
@@ -525,14 +588,11 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
               <Slider
                 value={[currentTime]}
                 max={duration || 1}
-                step={1}
-                onValueChange={handleTimeSeek}
+                step={0.1} // ← Mudança: de 1 para 0.1 (mais suave)
+                onValueChange={handleTimeSeekDebounced} // ← Mudança: versão com debounce
                 disabled={!duration}
                 aria-label="Progresso da faixa"
                 className="relative z-10"
-                style={{
-                  '--buffer-width': `${bufferProgress}%`
-                } as React.CSSProperties}
               />
               
               {/* CSS customizado para mostrar o buffer */}
@@ -617,3 +677,23 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     </Dialog>
   );
 }
+
+  // 🆕 ADICIONADO: Refs para debounce
+  const seekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 🆕 VERSÃO MELHORADA: handleTimeSeek com debounce
+  const handleTimeSeekDebounced = (value: number[]) => {
+    const newTime = value[0];
+    
+    // Atualizar UI imediatamente
+    setCurrentTime(newTime);
+    
+    // Debounce da mudança real de tempo
+    if (seekTimeoutRef.current) {
+      clearTimeout(seekTimeoutRef.current);
+    }
+    
+    seekTimeoutRef.current = setTimeout(() => {
+      handleTimeSeek(value);
+    }, 100); // 100ms de debounce
+  };
