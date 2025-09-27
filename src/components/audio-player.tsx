@@ -582,34 +582,4 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     </Dialog>
   );
 }
-
-
-// Análise do Problema de Interrupção Durante a Reprodução
-//
-// Agora entendo melhor o problema! A reprodução **para abruptamente no meio da faixa**, fazendo um "reset" inesperado. Isso é bem diferente do comportamento normal de fim de faixa.
-//
-// ### 🔍 **Possíveis Causas Identificadas**
-//
-// #### 1. **Problemas de Buffering/Rede (Mais Provável)**
-// - Em redes 4G móveis, a conexão pode ser instável
-// - O áudio pode parar de carregar e disparar eventos de erro
-// - O player atual tem um listener `handleWaiting` mas pode não estar tratando adequadamente
-//
-// #### 2. **Eventos de Erro Não Tratados**
-// O código atual **não possui tratamento para eventos de erro do áudio**:
-// ```typescript
-// // Eventos atuais - FALTA o 'error'
-// audio.addEventListener("timeupdate", handleTimeUpdate);
-// audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-// audio.addEventListener("canplay", handleCanPlay);
-// audio.addEventListener("ended", handleEnded);
-// audio.addEventListener("play", handlePlay);
-// audio.addEventListener("pause", handlePause);
-// audio.addEventListener("waiting", handleWaiting);
-// audio.addEventListener("loadstart", handleLoadStart);
-// ```
-// Adicionar após os estados existentes (linha ~35)
-
-  // 🆕 ETAPA 4: Função para retry manual
-  const handleManualRetry = () => {
  
