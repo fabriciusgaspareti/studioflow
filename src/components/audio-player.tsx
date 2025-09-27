@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import type { Track } from "@/lib/types";
-import { Music, Pause, Play, Volume2, VolumeX, ListMusic, Loader2 } from "lucide-react";
+import { Music, Pause, Play, Volume2, VolumeX, ListMusic, Loader2, Wifi, WifiOff } from "lucide-react";
 import { ScrollArea } from "./ui/scroll-area";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +30,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const mediaSessionRef = useRef<boolean>(false);
   const seekTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -45,8 +46,10 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const [connectionQuality, setConnectionQuality] = useState<'good' | 'poor' | 'unknown'>('unknown');
   const [showRetryButton, setShowRetryButton] = useState(false);
   const [bufferProgress, setBufferProgress] = useState(0);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [lastBufferTime, setLastBufferTime] = useState(0);
   
-  // Reset when dialog opens/closes
+  // 🆕 OTIMIZAÇÃO: Reset quando dialog abre/fecha
   useEffect(() => {
     if (isOpen && tracks.length > 0) {
       setActiveTrack(tracks[0]);
@@ -54,6 +57,9 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       setVersion('short');
       setCurrentTime(0);
       setDuration(0);
+      setConnectionQuality('unknown');
+      setStatusMessage(null);
+      setRetryCount(0);
     } else if (!isOpen) {
       const audio = audioRef.current;
       if (audio) {
@@ -64,29 +70,45 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
+      // Limpar timeouts
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+      }
     }
   }, [isOpen, tracks]);
 
-  // Handle track/version changes
+  // 🆕 OTIMIZAÇÃO: Handle track/version changes com preload inteligente
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio || !activeTrack) return;
 
-    // Pause current audio
+    // Pausar current audio
     audio.pause();
     setIsPlaying(false);
+    
+    // Configurações otimizadas para mobile/4G
+    audio.preload = 'metadata'; // Economizar dados
+    audio.crossOrigin = 'anonymous';
+    
+    // 🆕 NOVO: Configurações para conexões instáveis
+    if ('serviceWorker' in navigator) {
+      // Habilitar cache agressivo para áudio
+      audio.setAttribute('data-cache-audio', 'true');
+    }
     
     // Set new source
     audio.src = activeTrack.versions[version];
     setIsLoading(true);
+    setBufferProgress(0);
     audio.load();
 
     // Reset time states
     setCurrentTime(0);
     setDuration(0);
+    setShowRetryButton(false);
   }, [activeTrack, version]);
 
-  // ← MOVER PARA CÁ: useEffect separado para aplicar volume
+  // 🆕 OTIMIZAÇÃO: Volume control separado
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -99,256 +121,291 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     return () => audio.removeEventListener('canplay', handleCanPlay);
   }, [volume, activeTrack]);
 
-  // Audio event listeners
+  // 🆕 MELHORADO: Event listeners com otimizações para 4G
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-    };
+    // 🔧 CORRIGIDO: Remover a primeira definição de handleTimeUpdate (linha 129)
+    // e manter apenas a versão otimizada
     
     const handleLoadedMetadata = () => {
-      const DEBUG_AUDIO = process.env.NODE_ENV === 'development';
-      
-      // E substituir todos os console.log por:
-      if (DEBUG_AUDIO) {
-        console.log('🎵 [DEBUG] Audio metadata loaded:', {
-          duration: audio.duration,
-          track: activeTrack?.name,
-          version,
-          timestamp: new Date().toISOString()
-        });
-        setDuration(audio.duration || 0);
-      };
       setDuration(audio.duration || 0);
+      setIsLoading(false);
     };
     
     const handleCanPlay = () => {
-      console.log('🎵 [DEBUG] Audio can play:', {
-        track: activeTrack?.name,
-        version,
-        readyState: audio.readyState,
-        timestamp: new Date().toISOString()
-      });
       setIsLoading(false);
-      setRetryCount(0); // 🆕 Reset contador em sucesso
-      setIsRetrying(false); // 🆕 Reset estado de retry
+      setRetryCount(0);
+      setIsRetrying(false);
+      setShowRetryButton(false);
+      if (connectionQuality === 'poor') {
+        setConnectionQuality('good');
+        setStatusMessage(null);
+      }
     };
 
     const handlePlay = () => {
-      console.log('🎵 [DEBUG] Audio started playing:', {
-        track: activeTrack?.name,
-        version,
-        currentTime: audio.currentTime,
-        timestamp: new Date().toISOString()
-      });
       setIsPlaying(true);
-      setRetryCount(0); // 🆕 Reset contador quando reprodução inicia com sucesso
-      setIsRetrying(false); // 🆕 Reset estado de retry
+      setRetryCount(0);
+      setIsRetrying(false);
+      setIsBuffering(false);
     };
     
     const handleEnded = () => {
-      console.log('🎵 [DEBUG] Audio ended normally:', {
-        track: activeTrack?.name,
-        version,
-        currentTime: audio.currentTime,
-        duration: audio.duration,
-        timestamp: new Date().toISOString()
-      });
       setIsPlaying(false);
       setCurrentTime(0);
     };
     
     const handlePause = () => {
-      console.log('🎵 [DEBUG] Audio paused:', {
-        track: activeTrack?.name,
-        version,
-        currentTime: audio.currentTime,
-        wasPlaying: isPlaying,
-        timestamp: new Date().toISOString()
-      });
       setIsPlaying(false);
     };
 
     const handleWaiting = () => {
-      console.log('🎵 [DEBUG] Audio waiting (buffering):', {
-        track: activeTrack?.name,
-        version,
-        currentTime: audio.currentTime,
-        networkState: audio.networkState,
-        timestamp: new Date().toISOString()
-      });
-      setIsLoading(true);
+      setIsBuffering(true);
+      // 🆕 OTIMIZAÇÃO: Só mostrar mensagem após 2 segundos
+      setTimeout(() => {
+        if (isBuffering) {
+          setStatusMessage('Carregando...');
+        }
+      }, 2000);
     };
 
+    // 🔧 CORRIGIDO: Não resetar posição durante retry
     const handleLoadStart = () => {
-      console.log('🎵 [DEBUG] Audio load started:', {
-        track: activeTrack?.name,
-        version,
-        src: audio.src,
-        timestamp: new Date().toISOString()
-      });
-      setCurrentTime(0);
+      // Só resetar se não estivermos em processo de retry
+      if (!isRetrying) {
+        setCurrentTime(0);
+      }
       setDuration(0);
+      setBufferProgress(0);
     };
-
-    // 🆕 NOVO: Handler crítico para erros
-    // 🆕 MELHORADO: Handler com retry automático
+    
+    // 🔧 MELHORADO: Error handler com preservação de posição
     const handleError = () => {
       const error = audio.error;
-      const errorInfo = {
-        track: activeTrack?.name,
-        version,
-        errorCode: error?.code,
-        errorMessage: error?.message,
+      console.error('🚨 Audio error:', {
+        code: error?.code,
+        message: error?.message,
         networkState: audio.networkState,
-        readyState: audio.readyState,
-        src: audio.src,
-        currentTime: audio.currentTime,
-        retryAttempt: retryCount + 1,
-        timestamp: new Date().toISOString()
-      };
+        retryCount
+      });
       
-      console.error('🚨 [ERROR] Audio playback error:', errorInfo);
       setLastError(`Erro ${error?.code}: ${error?.message}`);
       
-      // 🆕 UX: Definir qualidade da conexão baseada no erro
-      if (error?.code === 2 || error?.code === 4) {
+      // 🔧 OTIMIZAÇÃO: Retry automático preservando posição
+      if ((error?.code === 2 || error?.code === 4) && retryCount < 5) {
+        const delay = Math.min(Math.pow(2, retryCount) * 1000, 10000);
+        const savedPosition = audio.currentTime; // 🔧 Salvar posição antes do reload
+        
         setConnectionQuality('poor');
-        setStatusMessage('Problemas de conexão detectados');
-      }
-      
-      // Retry automático para erros de rede (códigos 2 e 4)
-      if ((error?.code === 2 || error?.code === 4) && retryCount < 3) {
-        const delay = Math.pow(2, retryCount) * 1000;
-        const currentPosition = audio.currentTime;
-        
-        // 🆕 UX: Mensagem de status durante retry
-        setStatusMessage(`Reconectando... (${retryCount + 1}/3)`);
-        
-        console.log(`🔄 [RETRY] Iniciando tentativa ${retryCount + 1}/3 em ${delay}ms`, {
-          track: activeTrack?.name,
-          position: currentPosition,
-          errorCode: error?.code
-        });
-        
+        setStatusMessage(`Reconectando... (${retryCount + 1}/5)`);
         setIsRetrying(true);
-        setIsPlaying(false);
         
-        setTimeout(() => {
-          if (!activeTrack) {
-            setIsRetrying(false);
-            return;
-          }
+        retryTimeoutRef.current = setTimeout(() => {
+          if (!activeTrack) return;
           
-          console.log(`🔄 [RETRY] Executando tentativa ${retryCount + 1}/3`);
-          
-          // Recarregar áudio mantendo a posição
+          // 🔧 OTIMIZAÇÃO: Recarregar áudio mantendo estado
           audio.src = activeTrack.versions[version];
           audio.load();
           
-          // Aguardar carregamento antes de definir posição
-          const handleLoadedData = () => {
-            audio.currentTime = currentPosition;
-            audio.play().then(() => {
-              console.log('✅ [RETRY] Sucesso na tentativa', retryCount + 1);
+          const handleCanPlayThrough = () => {
+            // 🔧 Restaurar posição salva
+            audio.currentTime = savedPosition;
+            setCurrentTime(savedPosition);
+            
+            if (isPlaying) {
+              audio.play().then(() => {
+                setIsRetrying(false);
+                setRetryCount(prev => prev + 1);
+                setConnectionQuality('good');
+                setStatusMessage(null);
+              }).catch(() => {
+                setRetryCount(prev => prev + 1);
+              });
+            } else {
               setIsRetrying(false);
               setRetryCount(prev => prev + 1);
-              setStatusMessage(null); // 🆕 Limpar mensagem de sucesso
-              setConnectionQuality('good'); // 🆕 Conexão recuperada
-            }).catch((playError) => {
-              console.error('❌ [RETRY] Falha ao reproduzir após reload:', playError);
-              setIsRetrying(false);
-              setRetryCount(prev => prev + 1);
-            });
-            audio.removeEventListener('loadeddata', handleLoadedData);
+            }
+            
+            audio.removeEventListener('canplaythrough', handleCanPlayThrough);
           };
           
-          audio.addEventListener('loadeddata', handleLoadedData);
+          // 🔧 Usar canplaythrough para garantir que há buffer suficiente
+          audio.addEventListener('canplaythrough', handleCanPlayThrough);
         }, delay);
       } else {
-        // 🆕 UX: Falha definitiva - mostrar botão de retry manual
-        console.error('💀 [FINAL ERROR] Falha definitiva após tentativas ou erro crítico');
+        // Falha final - mostrar retry manual
         setIsPlaying(false);
         setIsLoading(false);
         setIsRetrying(false);
         setRetryCount(0);
-        setShowRetryButton(true); // 🆕 Mostrar botão de retry manual
-        setStatusMessage('Falha na reprodução. Tente novamente.');
+        setShowRetryButton(true);
+        setConnectionQuality('poor');
+        setStatusMessage('Falha na conexão. Tente novamente.');
       }
     };
 
-    // 🆕 NOVO: Handler para detectar quando download para
-    const handleStalled = () => {
-      console.warn('⚠️ [WARNING] Audio download stalled:', {
-        track: activeTrack?.name,
-        version,
-        currentTime: audio.currentTime,
-        networkState: audio.networkState,
-        timestamp: new Date().toISOString()
-      });
+    // 🔧 NOVO: Função para retry manual preservando posição
+    const handleManualRetry = () => {
+      if (!activeTrack) return;
+      
+      const audio = audioRef.current;
+      if (!audio) return;
+      
+      const savedPosition = currentTime; // 🔧 Usar currentTime do estado
+      
+      setShowRetryButton(false);
+      setIsLoading(true);
+      setIsRetrying(true);
+      setRetryCount(0);
+      
+      audio.src = activeTrack.versions[version];
+      audio.load();
+      
+      const handleCanPlayThrough = () => {
+        audio.currentTime = savedPosition;
+        setCurrentTime(savedPosition);
+        setIsLoading(false);
+        setIsRetrying(false);
+        setConnectionQuality('good');
+        setStatusMessage(null);
+        
+        if (isPlaying) {
+          audio.play();
+        }
+        
+        audio.removeEventListener('canplaythrough', handleCanPlayThrough);
+      };
+      
+      audio.addEventListener('canplaythrough', handleCanPlayThrough);
     };
 
-    // 🆕 ETAPA 3: Novos handlers para buffering otimizado
-    // 🎯 **Melhorias Solicitadas**
-    //
-    // 1. **Mensagens Mais Inteligentes** 
-    // - Remover mensagens desnecessárias que preocupam o usuário
-    // - Mostrar apenas quando há problemas reais de conectividade
-    //
-    // 2. **Barra de Progresso com Buffer Visual**
-    // - Adicionar sombra/indicador do buffer carregado
-    // - Melhor controle visual para o usuário
-    //
-    // 🔧 **Implementação**
-    // 🆕 MELHORADO: Mensagens mais inteligentes - apenas problemas reais
+    const handleStalled = () => {
+      setIsBuffering(true);
+      setConnectionQuality('poor');
+      // 🆕 OTIMIZAÇÃO: Remover mensagem técnica
+      // setTimeout(() => {
+      //   if (isBuffering) {
+      //     setStatusMessage('Conexão lenta - carregando...');
+      //   }
+      // }, 3000);
+    };
+
+    // 🆕 NOVO: Buffer progress tracking
+    // 🔧 MELHORADO: Buffer inteligente com preload agressivo
+    // 🆕 MELHORADO: Buffer contínuo e inteligente
     const handleProgress = () => {
       if (audio.buffered.length > 0) {
         const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
         const bufferPercent = duration > 0 ? (bufferedEnd / duration) * 100 : 0;
+        setBufferProgress(bufferPercent);
         
-        // 🆕 OTIMIZADO: Só mostrar mensagem em problemas críticos (buffer < 5%)
-        if (bufferPercent < 5 && isPlaying && currentTime > 10) {
+        // 🆕 BUFFER CONTÍNUO: Sempre manter 10% à frente
+        const bufferAhead = bufferedEnd - currentTime;
+        const targetBufferAhead = duration * 0.1; // 10% da duração total
+        const optimalBufferAhead = duration * 0.15; // 15% ideal para margem
+        
+        // 🆕 Forçar carregamento contínuo sem pausar
+        if (bufferAhead < targetBufferAhead && duration > 0) {
+          // Não pausar o áudio - apenas ajustar configurações de rede
+          if (audio.networkState === audio.NETWORK_IDLE) {
+            // Forçar mais carregamento
+            const currentSrc = audio.src;
+            audio.preload = 'auto';
+            if (audio.src !== currentSrc) {
+              audio.src = currentSrc;
+            }
+          }
+          
           setConnectionQuality('poor');
-          setStatusMessage('Conexão instável - carregando...');
-        } else if (bufferPercent > 20) {
+        } else if (bufferAhead >= optimalBufferAhead) {
           setConnectionQuality('good');
-          setStatusMessage(null); // Limpar mensagem quando buffer OK
         }
         
-        // 🆕 NOVO: Armazenar dados do buffer para a barra de progresso
-        setBufferProgress(bufferPercent);
+        // 🆕 Monitoramento de buffer crítico
+        if (bufferPercent < 5 && isPlaying && currentTime > 5) {
+          setConnectionQuality('poor');
+          setStatusMessage('Conexão instável');
+        } else if (bufferPercent > 20) {
+          setStatusMessage(null);
+        }
+      }
+    };
+    
+    // 🆕 NOVO: Função para forçar preload agressivo
+    const forcePreload = () => {
+      const audio = audioRef.current;
+      if (!audio || !activeTrack) return;
+      
+      // Configurar preload agressivo
+      audio.preload = 'auto';
+      
+      // Forçar download do buffer
+      if (audio.networkState === audio.NETWORK_IDLE) {
+        audio.load();
+      }
+    };
+    
+    // 🔧 MELHORADO: handleTimeUpdate com detecção de buffer
+    // 🆕 MELHORADO: TimeUpdate com buffer contínuo
+    const handleTimeUpdate = () => {
+      setCurrentTime(audio.currentTime);
+      
+      // 🆕 Verificar buffer contínuo a cada segundo
+      if (audio.buffered.length > 0) {
+        const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+        const bufferAhead = bufferedEnd - audio.currentTime;
+        const targetBuffer = duration * 0.1; // 10% à frente
+        
+        // Se buffer está baixo, forçar mais carregamento
+        if (bufferAhead < targetBuffer && isPlaying && duration > 0) {
+          // Usar técnica de range request para carregar mais
+          if (audio.networkState !== audio.NETWORK_LOADING) {
+            const nextPosition = audio.currentTime + targetBuffer;
+            if (nextPosition < duration) {
+              // Simular seek para forçar carregamento
+              const originalTime = audio.currentTime;
+              audio.currentTime = Math.min(nextPosition, duration - 1);
+              setTimeout(() => {
+                if (audio.currentTime !== originalTime) {
+                  audio.currentTime = originalTime;
+                }
+              }, 50);
+            }
+          }
+        }
+      }
+      
+      // Detecção de travamento sem pausar
+      const now = Date.now();
+      if (Math.abs(audio.currentTime - lastBufferTime) < 0.1 && isPlaying) {
+        if (now - lastBufferTime > 3000) {
+          setIsBuffering(true);
+          setConnectionQuality('poor');
+          setStatusMessage('Conexão instável - recarregando buffer...');
+          forcePreload(); // Tentar forçar mais buffer
+        }
+      } else {
+        setLastBufferTime(now);
+        setIsBuffering(false);
       }
     };
     
     const handleSuspend = () => {
-      // 🆕 OTIMIZADO: Não mostrar mensagem para suspend normal
-      console.log('⏸️ [DEBUG] Audio loading suspended:', {
-        track: activeTrack?.name,
-        currentTime: audio.currentTime,
-        timestamp: new Date().toISOString()
-      });
-      // Removido: setStatusMessage - não preocupar usuário
+      // 🆕 OTIMIZAÇÃO: Não preocupar usuário com suspend normal
     };
     
     const handleAbort = () => {
-      console.log('❌ [DEBUG] Audio loading aborted:', {
-        track: activeTrack?.name,
-        timestamp: new Date().toISOString()
-      });
-      
-      // 🆕 OTIMIZADO: Só mostrar se for abort durante reprodução ativa
       if (isPlaying) {
         setConnectionQuality('poor');
-        setStatusMessage('Falha no carregamento - reconectando...');
+        setStatusMessage('Falha no carregamento');
       }
     };
 
-    // Event listeners existentes
+    // Event listeners
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    // ← REMOVER: o useEffect que estava aqui dentro
     audio.addEventListener("canplay", handleCanPlay);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
@@ -357,14 +414,12 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     audio.addEventListener("loadstart", handleLoadStart);
     audio.addEventListener("error", handleError);
     audio.addEventListener("stalled", handleStalled);
-    
-    // 🆕 ADICIONADOS: Listeners de buffering que estavam faltando
     audio.addEventListener("progress", handleProgress);
     audio.addEventListener("suspend", handleSuspend);
     audio.addEventListener("abort", handleAbort);
 
     return () => {
-      // Cleanup existente
+      // Cleanup
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("canplay", handleCanPlay);
@@ -375,13 +430,11 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       audio.removeEventListener("loadstart", handleLoadStart);
       audio.removeEventListener("error", handleError);
       audio.removeEventListener("stalled", handleStalled);
-      
-      // 🆕 ADICIONADOS: Cleanup dos listeners de buffering
       audio.removeEventListener("progress", handleProgress);
       audio.removeEventListener("suspend", handleSuspend);
       audio.removeEventListener("abort", handleAbort);
     };
-  }, [activeTrack, version, isPlaying]);
+  }, [activeTrack, version, isPlaying, retryCount, bufferProgress, connectionQuality, statusMessage, isBuffering, lastBufferTime]);
   
   const handleSelectTrack = (track: Track) => {
     if (activeTrack?._id !== track._id) {
@@ -389,18 +442,18 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     }
   };
 
+  // 🆕 OTIMIZAÇÃO: Toggle play/pause melhorado
   const togglePlayPause = () => {
     if (!activeTrack) return;
     
     const audio = audioRef.current;
     if (!audio) return;
     
-    // 🆕 SOLUÇÃO: Verificar estado antes de alternar
     if (isPlaying) {
-      // 🆕 SOLUÇÃO: Fade out suave antes de pausar
+      // 🆕 OTIMIZAÇÃO: Fade out suave
       const originalVolume = audio.volume;
       const fadeSteps = 5;
-      const fadeTime = 100; // 100ms total
+      const fadeTime = 100;
       
       for (let i = fadeSteps; i >= 0; i--) {
         setTimeout(() => {
@@ -408,20 +461,20 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             audioRef.current.volume = (originalVolume * i) / fadeSteps;
             if (i === 0) {
               audioRef.current.pause();
-              audioRef.current.volume = originalVolume; // Restaurar volume
+              audioRef.current.volume = originalVolume;
             }
           }
         }, (fadeSteps - i) * (fadeTime / fadeSteps));
       }
     } else {
-      // 🆕 SOLUÇÃO: Verificar se áudio está pronto antes de tocar
-      if (audio.readyState >= 2) { // HAVE_CURRENT_DATA
+      // 🆕 OTIMIZAÇÃO: Verificar readyState antes de tocar
+      if (audio.readyState >= 2) {
         audio.play().catch(e => {
           console.error("Error playing audio:", e);
           setIsPlaying(false);
         });
       } else {
-        // Aguardar carregamento
+        setIsLoading(true);
         const handleCanPlay = () => {
           audio.play().catch(e => {
             console.error("Error playing audio:", e);
@@ -439,31 +492,28 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     setVersion(newVersion);
   };
 
+  // 🆕 OTIMIZAÇÃO: Seek melhorado para conexões instáveis
   const handleTimeSeek = (value: number[]) => {
     if (audioRef.current && activeTrack && duration > 0) {
       const audio = audioRef.current;
       const newTime = value[0];
       const wasPlaying = !audio.paused;
       
-      // 🆕 SOLUÇÃO: Pausar temporariamente para evitar estalos
       if (wasPlaying) {
         audio.pause();
       }
       
-      // 🆕 SOLUÇÃO: Aguardar um frame antes de mudar o tempo
       requestAnimationFrame(() => {
         if (audioRef.current) {
           audioRef.current.currentTime = newTime;
           setCurrentTime(newTime);
           
-          // 🆕 SOLUÇÃO: Retomar reprodução após pequeno delay
           if (wasPlaying) {
             setTimeout(() => {
-              if (audioRef.current && !audioRef.current.paused) {
-                return; // Já está tocando
+              if (audioRef.current && audioRef.current.paused) {
+                audioRef.current.play().catch(console.warn);
               }
-              audioRef.current?.play().catch(console.warn);
-            }, 50); // 50ms de delay para estabilizar
+            }, 100); // 🆕 OTIMIZAÇÃO: Delay maior para 4G
           }
         }
       });
@@ -482,24 +532,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     setVolume(newVolume);
     
     if (audioRef.current) {
-      const audio = audioRef.current;
-      const currentVol = audio.volume;
-      const volumeDiff = Math.abs(newVolume - currentVol);
-      
-      if (volumeDiff > 0.1) {
-        const steps = 3;
-        const stepSize = (newVolume - currentVol) / steps;
-        
-        for (let i = 1; i <= steps; i++) {
-          setTimeout(() => {
-            if (audioRef.current) {
-              audioRef.current.volume = currentVol + (stepSize * i);
-            }
-          }, i * 15);
-        }
-      } else {
-        audio.volume = newVolume;
-      }
+      audioRef.current.volume = newVolume;
     }
   };
 
@@ -511,20 +544,56 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     }
   };
 
+  // 🆕 OTIMIZAÇÃO: Debounced seek para melhor performance
   const handleTimeSeekDebounced = (value: number[]) => {
     const newTime = value[0];
+    setCurrentTime(newTime); // 🆕 OTIMIZAÇÃO: Update UI imediatamente
     
-    // ❌ PROBLEMA: Atualizar UI imediatamente causa conflitos
-    // setCurrentTime(newTime);
-    
-    // Debounce da mudança real de tempo
     if (seekTimeoutRef.current) {
       clearTimeout(seekTimeoutRef.current);
     }
     
     seekTimeoutRef.current = setTimeout(() => {
       handleTimeSeek(value);
-    }, 50); // ✅ SOLUÇÃO: Reduzir debounce para 50ms para melhor responsividade
+    }, 100); // 🆕 OTIMIZAÇÃO: Delay maior para 4G
+  };
+
+  // 🆕 NOVO: Retry manual
+  const handleManualRetry = () => {
+    if (!activeTrack) return;
+    
+    setRetryCount(0);
+    setShowRetryButton(false);
+    setIsRetrying(true);
+    setStatusMessage('Reconectando...');
+    
+    const audio = audioRef.current;
+    if (audio) {
+      const currentPosition = audio.currentTime;
+      audio.src = activeTrack.versions[version];
+      audio.load();
+      
+      const handleLoadedData = () => {
+        audio.currentTime = currentPosition;
+        if (isPlaying) {
+          audio.play().then(() => {
+            setIsRetrying(false);
+            setStatusMessage(null);
+            setConnectionQuality('good');
+          }).catch(() => {
+            setIsRetrying(false);
+            setShowRetryButton(true);
+            setStatusMessage('Falha na reconexão');
+          });
+        } else {
+          setIsRetrying(false);
+          setStatusMessage(null);
+        }
+        audio.removeEventListener('loadeddata', handleLoadedData);
+      };
+      
+      audio.addEventListener('loadeddata', handleLoadedData);
+    }
   };
 
   return (
@@ -533,13 +602,13 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
         className="max-w-[95vw] sm:max-w-lg rounded-lg"
         onInteractOutside={(event) => event.preventDefault()}
       >
+        
         <audio
           ref={audioRef}
-          preload="metadata" // ← Mudança: de "auto" para "metadata"
+          preload="auto"
           crossOrigin="anonymous"
-          // 🆕 ADICIONADO: Configurações para reduzir estalos
+          // 🆕 OTIMIZAÇÃO: Configurações para buffer contínuo
           style={{
-            // Forçar aceleração de hardware quando disponível
             transform: 'translateZ(0)',
             willChange: 'auto'
           }}
@@ -579,7 +648,6 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             </div>
         </ScrollArea>
 
-       
         {activeTrack ? (
         <div className="space-y-4 pt-4">
             <div className="flex flex-col sm:flex-row justify-center gap-2 sm:gap-4">
@@ -599,32 +667,60 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
               </Button>
             </div>
             
-            {/* 🆕 NOVO: Barra de progresso com indicador de buffer */}
-            <div className="relative">
-              {/* Slider original com buffer como background */}
-
+            {/* 🆕 NOVO: Barra de progresso com buffer visual - ALTURA AUMENTADA PARA MOBILE */}
+            <div className="relative space-y-2">
+              {/* Buffer indicator com gradiente - altura aumentada */}
+              <div className="w-full h-4 sm:h-3 bg-secondary rounded-full overflow-hidden relative">
+                {/* Buffer de fundo (total carregado) */}
+                <div 
+                  className="h-full bg-muted/40 transition-all duration-300"
+                  style={{ width: `${bufferProgress}%` }}
+                />
+                
+                {/* Buffer de preload (10% à frente da posição atual) */}
+                <div 
+                  className="h-full bg-primary/20 transition-all duration-300 absolute top-0"
+                  style={{ 
+                    left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                    width: `${duration > 0 ? Math.min(10, (bufferProgress - (currentTime / duration) * 100)) : 0}%`
+                  }}
+                />
+                
+                {/* Posição atual (barra de tempo) */}
+                <div 
+                  className="h-full bg-primary transition-all duration-150 absolute top-0 z-10"
+                  style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+                
+                {/* Indicador de posição atual - mais visível */}
+                <div 
+                  className="absolute top-0 w-1.5 sm:w-1 h-full bg-primary-foreground shadow-lg transition-all duration-150 z-20"
+                  style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                />
+              </div>
+              
+              {/* Slider principal - área de toque aumentada para mobile */}
               <Slider
                 value={[currentTime]}
                 max={duration || 1}
                 step={0.1}
-                onValueChange={handleTimeSeekDebounced} // ← ERRO: Função não definida
+                onValueChange={handleTimeSeekDebounced}
                 disabled={!duration}
                 aria-label="Progresso da faixa"
-                className="relative z-10"
+                className="w-full opacity-0 absolute top-0 h-4 sm:h-3 cursor-pointer"
               />
               
-              {/* CSS customizado para mostrar o buffer */}
-              <style jsx>{`
-                .relative :global([data-radix-slider-track]) {
-                  background: linear-gradient(
-                    to right,
-                    hsl(var(--muted)) 0%,
-                    hsl(var(--muted)) var(--buffer-width, 0%),
-                    hsl(var(--secondary)) var(--buffer-width, 0%),
-                    hsl(var(--secondary)) 100%
-                  ) !important;
-                }
-              `}</style>
+              {/* Informações do buffer */}
+              {duration > 0 && (
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Buffer: {Math.round(bufferProgress)}%</span>
+                  <span>
+                    À frente: {audioRef.current?.buffered.length > 0 
+                      ? Math.max(0, Math.round(audioRef.current.buffered.end(audioRef.current.buffered.length - 1) - currentTime))
+                      : 0}s
+                  </span>
+                </div>
+              )}
             </div>
             
             <div className="flex justify-between text-xs text-muted-foreground">
@@ -637,18 +733,27 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
         )}
         
         <DialogFooter className="flex-col sm:flex-row sm:justify-between items-center w-full pt-4 gap-4">
-            {/* 🆕 ETAPA 4: Indicador de status */}
-            {statusMessage && (
-              <div className="w-full text-center text-sm text-muted-foreground bg-muted/50 p-2 rounded-md">
+            {/* 🆕 NOVO: Indicador de status simplificado */}
+            {connectionQuality !== 'unknown' && (
+              <div className="w-full text-center text-sm bg-muted/50 p-2 rounded-md">
                 <div className="flex items-center justify-center gap-2">
                   {isRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
-                  <span>{statusMessage}</span>
+                  {isBuffering && !isRetrying && <Loader2 className="h-4 w-4 animate-spin" />}
+                  
+                  {/* Ícone de conexão */}
                   {connectionQuality === 'poor' && (
-                    <div className="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" title="Conexão instável" />
+                    <WifiOff className="h-4 w-4 text-yellow-500" title="Conexão instável" />
                   )}
                   {connectionQuality === 'good' && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Conexão estável" />
+                    <Wifi className="h-4 w-4 text-green-500" title="Conexão estável" />
                   )}
+                  
+                  <span className={cn(
+                    connectionQuality === 'poor' ? 'text-yellow-600' : 'text-green-600'
+                  )}>
+                    {connectionQuality === 'good' ? 'Conexão estável' : 
+                     connectionQuality === 'poor' ? 'Conexão instável' : 'Sem conexão'}
+                  </span>
                 </div>
               </div>
             )}
@@ -663,22 +768,29 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
                     max={1}
                     step={0.005}
                     onValueChange={handleVolumeChange}
-                    className="w-16 sm:w-24" // ← Alterado: menor no mobile (w-16) e normal no desktop (sm:w-24)
+                    className="w-16 sm:w-24"
                     aria-label="Controle de volume"
                     disabled={!activeTrack}
                 />
             </div>
             
             <div className="flex items-center justify-center gap-2">
-                {/* 🆕 ETAPA 4: Botão de retry manual */}
+                {/* 🆕 NOVO: Botão de retry manual */}
                 {showRetryButton && (
-                  <Button onClick={handleManualRetry} variant="outline" size="sm">
-                    Tentar Novamente
+                  <Button onClick={handleManualRetry} variant="outline" size="sm" disabled={isRetrying}>
+                    {isRetrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Tentar Novamente'}
                   </Button>
                 )}
                 
-                <Button onClick={togglePlayPause} size="lg" className="h-16 w-16 rounded-full bg-accent hover:bg-accent/90" disabled={!activeTrack || isLoading || isRetrying}>
-                    {isLoading || isRetrying ? (
+                <Button 
+                  onClick={togglePlayPause} 
+                  size="lg" 
+                  className="h-16 w-16 rounded-full bg-accent hover:bg-accent/90" 
+                  disabled={!activeTrack || (isLoading && !isRetrying)}
+                >
+                    {(isLoading && !isRetrying) ? (
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                    ) : isRetrying ? (
                         <Loader2 className="h-8 w-8 animate-spin" />
                     ) : isPlaying ? (
                         <Pause className="h-8 w-8" />
@@ -694,4 +806,4 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       </DialogContent>
     </Dialog>
   );
-} // ✅ Componente termina aqui - sem código adicional
+}
