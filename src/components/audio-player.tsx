@@ -514,8 +514,8 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const handleTimeSeekDebounced = (value: number[]) => {
     const newTime = value[0];
     
-    // Atualizar UI imediatamente
-    setCurrentTime(newTime);
+    // ❌ PROBLEMA: Atualizar UI imediatamente causa conflitos
+    // setCurrentTime(newTime);
     
     // Debounce da mudança real de tempo
     if (seekTimeoutRef.current) {
@@ -524,7 +524,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     
     seekTimeoutRef.current = setTimeout(() => {
       handleTimeSeek(value);
-    }, 100); // 100ms de debounce
+    }, 50); // ✅ SOLUÇÃO: Reduzir debounce para 50ms para melhor responsividade
   };
 
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,8 +16,32 @@ import { LogOut } from 'lucide-react';
 import { LoginDialog } from "./login-dialog";
 
 export function AuthButtons() {
-  const { isLoggedIn, username, role, logout } = useAuth();
+  const { isLoggedIn, username, role, signOut } = useAuth();
   const [loginDialogOpen, setLoginDialogOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // ✅ SOLUÇÃO: Detectar mobile
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // ✅ SOLUÇÃO: Função de logout com feedback
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      // Forçar reload da página no mobile para garantir logout
+      if (isMobile) {
+        window.location.reload();
+      }
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
+    }
+  };
 
   if (isLoggedIn) {
     return (
@@ -39,7 +63,10 @@ export function AuthButtons() {
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={logout}>
+          <DropdownMenuItem 
+            onClick={handleLogout}
+            className="cursor-pointer focus:bg-destructive focus:text-destructive-foreground"
+          >
             <LogOut className="mr-2 h-4 w-4" />
             <span>Sair</span>
           </DropdownMenuItem>
