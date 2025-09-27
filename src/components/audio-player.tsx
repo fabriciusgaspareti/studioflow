@@ -27,6 +27,7 @@ interface AudioPlayerProps {
 
 export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: AudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const volumeTimeoutRef = useRef<NodeJS.Timeout | null>(null); // ← ADICIONAR esta linha
   const [activeTrack, setActiveTrack] = useState<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -77,13 +78,26 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     
     // Set new source
     audio.src = activeTrack.versions[version];
-    setIsLoading(true); // Inicia o carregamento
+    setIsLoading(true);
     audio.load();
 
     // Reset time states
     setCurrentTime(0);
     setDuration(0);
   }, [activeTrack, version]);
+
+  // ← MOVER PARA CÁ: useEffect separado para aplicar volume
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleCanPlay = () => {
+      audio.volume = volume;
+    };
+
+    audio.addEventListener('canplay', handleCanPlay);
+    return () => audio.removeEventListener('canplay', handleCanPlay);
+  }, [volume, activeTrack]);
 
   // Audio event listeners
   useEffect(() => {
@@ -328,6 +342,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     // Event listeners existentes
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("loadedmetadata", handleLoadedMetadata);
+    // ← REMOVER: o useEffect que estava aqui dentro
     audio.addEventListener("canplay", handleCanPlay);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("play", handlePlay);
@@ -404,19 +419,13 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   };
 
   const handleVolumeChange = (value: number[]) => {
-      if (audioRef.current) {
-          // Aplicar o volume imediatamente para feedback visual
-          setVolume(value[0]);
-          
-          // Debounce para aplicar ao elemento audio
-          clearTimeout(volumeTimeoutRef.current);
-          volumeTimeoutRef.current = setTimeout(() => {
-              if (audioRef.current) {
-                  audioRef.current.volume = value[0];
-              }
-          }, 10);
-      }
-  }
+    const newVolume = value[0];
+    setVolume(newVolume);
+    
+    if (audioRef.current) {
+      audioRef.current.volume = newVolume;
+    }
+  };
 
   const toggleMute = () => {
       const newVolume = volume > 0 ? 0 : 1;
