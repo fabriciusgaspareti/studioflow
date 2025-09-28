@@ -154,11 +154,12 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     
     const handleEnded = () => {
       setIsPlaying(false);
-      setCurrentTime(0);
+      setCurrentTime(0); // Só aqui resetamos para o início
     };
     
     const handlePause = () => {
       setIsPlaying(false);
+      // Não resetar currentTime - manter posição atual
     };
 
     const handleWaiting = () => {
@@ -173,15 +174,18 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
     // 🔧 CORRIGIDO: Não resetar posição durante retry
     const handleLoadStart = () => {
-      // Só resetar se não estivermos em processo de retry
-      if (!isRetrying) {
+      // Só resetar se não estivermos em processo de retry OU se for uma nova faixa
+      if (!isRetrying && !isBuffering) {
         setCurrentTime(0);
       }
-      setDuration(0);
-      setBufferProgress(0);
+      // Não resetar duration e bufferProgress durante reconexão
+      if (!isRetrying) {
+        setDuration(0);
+        setBufferProgress(0);
+      }
     };
     
-    // 🔧 MELHORADO: Error handler com preservação de posição
+    // 🔧 MELHORADO: Error handler preservando posição sempre
     const handleError = () => {
       const error = audio.error;
       console.error('🚨 Audio error:', {
@@ -193,14 +197,15 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       
       setLastError(`Erro ${error?.code}: ${error?.message}`);
       
-      // 🔧 OTIMIZAÇÃO: Retry automático preservando posição
+      // 🔧 OTIMIZAÇÃO: Retry automático preservando posição SEMPRE
       if ((error?.code === 2 || error?.code === 4) && retryCount < 5) {
         const delay = Math.min(Math.pow(2, retryCount) * 1000, 10000);
-        const savedPosition = audio.currentTime; // 🔧 Salvar posição antes do reload
+        const savedPosition = currentTime; // 🔧 Usar estado em vez de audio.currentTime
         
         setConnectionQuality('poor');
         setStatusMessage(`Reconectando... (${retryCount + 1}/5)`);
         setIsRetrying(true);
+        setIsPlaying(false); // 🔧 Pausar durante reconexão
         
         retryTimeoutRef.current = setTimeout(() => {
           if (!activeTrack) return;
@@ -214,35 +219,27 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             audio.currentTime = savedPosition;
             setCurrentTime(savedPosition);
             
-            if (isPlaying) {
-              audio.play().then(() => {
-                setIsRetrying(false);
-                setRetryCount(prev => prev + 1);
-                setConnectionQuality('good');
-                setStatusMessage(null);
-              }).catch(() => {
-                setRetryCount(prev => prev + 1);
-              });
-            } else {
-              setIsRetrying(false);
-              setRetryCount(prev => prev + 1);
-            }
+            // 🔧 NÃO reproduzir automaticamente - aguardar ação do usuário
+            setIsRetrying(false);
+            setRetryCount(prev => prev + 1);
+            setConnectionQuality('good');
+            setStatusMessage('Conexão restaurada - Clique play para continuar');
             
             audio.removeEventListener('canplaythrough', handleCanPlayThrough);
           };
           
-          // 🔧 Usar canplaythrough para garantir que há buffer suficiente
           audio.addEventListener('canplaythrough', handleCanPlayThrough);
         }, delay);
       } else {
-        // Falha final - mostrar retry manual
+        // Falha final - pausar na posição atual
         setIsPlaying(false);
         setIsLoading(false);
         setIsRetrying(false);
         setRetryCount(0);
         setShowRetryButton(true);
         setConnectionQuality('poor');
-        setStatusMessage('Falha na conexão. Tente novamente.');
+        setStatusMessage('Falha na conexão. Posição preservada.');
+        // 🔧 NÃO resetar currentTime - manter posição
       }
     };
 
@@ -283,13 +280,9 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
 
     const handleStalled = () => {
       setIsBuffering(true);
+      setIsPlaying(false); // Pausar durante stall
       setConnectionQuality('poor');
-      // 🆕 OTIMIZAÇÃO: Remover mensagem técnica
-      // setTimeout(() => {
-      //   if (isBuffering) {
-      //     setStatusMessage('Conexão lenta - carregando...');
-      //   }
-      // }, 3000);
+      setStatusMessage('Conexão instável - Aguardando...');
     };
 
     // 🆕 NOVO: Buffer progress tracking
@@ -383,8 +376,9 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     
     const handleAbort = () => {
       if (isPlaying) {
+        setIsPlaying(false); // Pausar, mas manter posição
         setConnectionQuality('poor');
-        setStatusMessage('Falha no carregamento');
+        setStatusMessage('Carregamento interrompido - Posição preservada');
       }
     };
 
@@ -427,7 +421,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     }
   };
 
-  // 🆕 OTIMIZAÇÃO: Toggle play/pause melhorado
+  // 🔧 MELHORADO: TogglePlayPause com lógica de stop
   const togglePlayPause = () => {
     if (!activeTrack) return;
     
@@ -435,24 +429,18 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
     if (!audio) return;
     
     if (isPlaying) {
-      // 🆕 OTIMIZAÇÃO: Fade out suave
-      const originalVolume = audio.volume;
-      const fadeSteps = 5;
-      const fadeTime = 100;
-      
-      for (let i = fadeSteps; i >= 0; i--) {
-        setTimeout(() => {
-          if (audioRef.current) {
-            audioRef.current.volume = (originalVolume * i) / fadeSteps;
-            if (i === 0) {
-              audioRef.current.pause();
-              audioRef.current.volume = originalVolume;
-            }
-          }
-        }, (fadeSteps - i) * (fadeTime / fadeSteps));
-      }
+      // Se estiver tocando, pausar (não resetar posição)
+      audio.pause();
+      setIsPlaying(false);
     } else {
-      // 🆕 OTIMIZAÇÃO: Verificar readyState antes de tocar
+      // Se estiver pausado, verificar se deve continuar ou começar do início
+      if (currentTime >= duration - 1) {
+        // Se chegou ao final, começar do início
+        audio.currentTime = 0;
+        setCurrentTime(0);
+      }
+      
+      // Continuar da posição atual
       if (audio.readyState >= 2) {
         audio.play().catch(e => {
           console.error("Error playing audio:", e);
