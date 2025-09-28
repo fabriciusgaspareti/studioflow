@@ -172,20 +172,19 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       }, 2000);
     };
 
-    // 🔧 CORRIGIDO: Não resetar posição durante retry
+    // 🔧 CORRIGIDO: Não resetar posição durante problemas de conexão
     const handleLoadStart = () => {
-      // Só resetar se não estivermos em processo de retry OU se for uma nova faixa
-      if (!isRetrying && !isBuffering) {
+      // NUNCA resetar currentTime durante retry ou buffering
+      // Só resetar quando for uma nova faixa (não durante reconexão)
+      if (!isRetrying && !isBuffering && !showRetryButton) {
         setCurrentTime(0);
-      }
-      // Não resetar duration e bufferProgress durante reconexão
-      if (!isRetrying) {
         setDuration(0);
         setBufferProgress(0);
       }
+      // Durante reconexão, manter todos os valores atuais
     };
     
-    // 🔧 MELHORADO: Error handler preservando posição sempre
+    // 🔧 MELHORADO: Error handler que preserva posição SEMPRE
     const handleError = () => {
       const error = audio.error;
       console.error('🚨 Audio error:', {
@@ -197,33 +196,37 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       
       setLastError(`Erro ${error?.code}: ${error?.message}`);
       
-      // 🔧 OTIMIZAÇÃO: Retry automático preservando posição SEMPRE
+      // 🔧 PRESERVAR posição atual SEMPRE
+      const savedPosition = currentTime; // Usar estado atual
+      
+      // 🔧 OTIMIZAÇÃO: Retry automático preservando posição
       if ((error?.code === 2 || error?.code === 4) && retryCount < 5) {
         const delay = Math.min(Math.pow(2, retryCount) * 1000, 10000);
-        const savedPosition = currentTime; // 🔧 Usar estado em vez de audio.currentTime
         
         setConnectionQuality('poor');
-        setStatusMessage(`Reconectando... (${retryCount + 1}/5)`);
+        setStatusMessage(`Reconectando... (${retryCount + 1}/5) - Posição: ${Math.floor(savedPosition)}s`);
         setIsRetrying(true);
-        setIsPlaying(false); // 🔧 Pausar durante reconexão
+        setIsPlaying(false); // Pausar durante reconexão
         
         retryTimeoutRef.current = setTimeout(() => {
           if (!activeTrack) return;
           
-          // 🔧 OTIMIZAÇÃO: Recarregar áudio mantendo estado
+          // 🔧 Recarregar áudio
           audio.src = activeTrack.versions[version];
           audio.load();
           
           const handleCanPlayThrough = () => {
-            // 🔧 Restaurar posição salva
+            // 🔧 Restaurar posição salva SEMPRE
             audio.currentTime = savedPosition;
             setCurrentTime(savedPosition);
             
-            // 🔧 NÃO reproduzir automaticamente - aguardar ação do usuário
             setIsRetrying(false);
             setRetryCount(prev => prev + 1);
             setConnectionQuality('good');
-            setStatusMessage('Conexão restaurada - Clique play para continuar');
+            setStatusMessage(`Conexão restaurada na posição ${Math.floor(savedPosition)}s`);
+            
+            // Limpar mensagem após 3 segundos
+            setTimeout(() => setStatusMessage(null), 3000);
             
             audio.removeEventListener('canplaythrough', handleCanPlayThrough);
           };
@@ -231,15 +234,15 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
           audio.addEventListener('canplaythrough', handleCanPlayThrough);
         }, delay);
       } else {
-        // Falha final - pausar na posição atual
+        // Falha final - manter posição
         setIsPlaying(false);
         setIsLoading(false);
         setIsRetrying(false);
         setRetryCount(0);
         setShowRetryButton(true);
         setConnectionQuality('poor');
-        setStatusMessage('Falha na conexão. Posição preservada.');
-        // 🔧 NÃO resetar currentTime - manter posição
+        setStatusMessage(`Falha na conexão. Posição preservada: ${Math.floor(savedPosition)}s`);
+        // 🔧 NUNCA resetar currentTime
       }
     };
 
@@ -278,11 +281,12 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       audio.addEventListener('canplaythrough', handleCanPlayThrough);
     };
 
+    // 🔧 CORRIGIDO: Stalled preserva posição
     const handleStalled = () => {
       setIsBuffering(true);
-      setIsPlaying(false); // Pausar durante stall
+      setIsPlaying(false); // Pausar mas manter posição
       setConnectionQuality('poor');
-      setStatusMessage('Conexão instável - Aguardando...');
+      setStatusMessage(`Conexão instável - Pausado em ${Math.floor(currentTime)}s`);
     };
 
     // 🆕 NOVO: Buffer progress tracking
@@ -374,11 +378,12 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       // 🆕 OTIMIZAÇÃO: Não preocupar usuário com suspend normal
     };
     
+    // 🔧 MELHORADO: Abort preserva posição
     const handleAbort = () => {
       if (isPlaying) {
-        setIsPlaying(false); // Pausar, mas manter posição
+        setIsPlaying(false); // Pausar mas manter posição
         setConnectionQuality('poor');
-        setStatusMessage('Carregamento interrompido - Posição preservada');
+        setStatusMessage(`Carregamento interrompido - Posição preservada: ${Math.floor(currentTime)}s`);
       }
     };
 
