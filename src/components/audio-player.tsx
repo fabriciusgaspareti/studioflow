@@ -225,6 +225,14 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             setConnectionQuality('good');
             setStatusMessage(`Conexão restaurada na posição ${Math.floor(savedPosition)}s`);
             
+            // 🔧 CORRIGIDO: Continuar reproduzindo automaticamente após reconexão
+            if (isPlaying) {
+              audio.play().catch(e => {
+                console.error("Erro ao retomar reprodução:", e);
+                setIsPlaying(false);
+              });
+            }
+            
             // Limpar mensagem após 3 segundos
             setTimeout(() => setStatusMessage(null), 3000);
             
@@ -254,6 +262,7 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
       if (!audio) return;
       
       const savedPosition = currentTime; // 🔧 Usar currentTime do estado
+      const wasPlaying = isPlaying; // 🔧 Lembrar se estava tocando
       
       setShowRetryButton(false);
       setIsLoading(true);
@@ -269,12 +278,18 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
         setIsLoading(false);
         setIsRetrying(false);
         setConnectionQuality('good');
-        setStatusMessage(null);
+        setStatusMessage(`Conexão restaurada na posição ${Math.floor(savedPosition)}s`);
         
-        if (isPlaying) {
-          audio.play();
+        // 🔧 CORRIGIDO: Continuar reproduzindo se estava tocando antes
+        if (wasPlaying) {
+          setIsPlaying(true);
+          audio.play().catch(e => {
+            console.error("Erro ao retomar reprodução:", e);
+            setIsPlaying(false);
+          });
         }
         
+        setTimeout(() => setStatusMessage(null), 3000);
         audio.removeEventListener('canplaythrough', handleCanPlayThrough);
       };
       
@@ -540,37 +555,58 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
   const handleManualRetry = () => {
     if (!activeTrack) return;
     
+    const audio = audioRef.current;
+    if (!audio) return;
+    
+    const savedPosition = currentTime;
+    const wasPlaying = isPlaying; // 🔧 Lembrar se estava tocando
+    
     setRetryCount(0);
     setShowRetryButton(false);
     setIsRetrying(true);
     setStatusMessage('Reconectando...');
     
+    audio.src = activeTrack.versions[version];
+    audio.load();
+    
+    const handleLoadedData = () => {
+      audio.currentTime = savedPosition;
+      setCurrentTime(savedPosition);
+      setIsRetrying(false);
+      setConnectionQuality('good');
+      setStatusMessage(`Conexão restaurada na posição ${Math.floor(savedPosition)}s`);
+      
+      // 🔧 CORRIGIDO: Continuar reproduzindo se estava tocando antes
+      if (wasPlaying) {
+        setIsPlaying(true);
+        audio.play().then(() => {
+          // Sucesso na reprodução
+        }).catch(() => {
+          setIsPlaying(false);
+          setShowRetryButton(true);
+          setStatusMessage('Falha na reconexão');
+        });
+      }
+      
+      setTimeout(() => setStatusMessage(null), 3000);
+      audio.removeEventListener('loadeddata', handleLoadedData);
+    };
+    
+    audio.addEventListener('loadeddata', handleLoadedData);
+  };
+
+  // 🆕 Função para parar manualmente durante interrupção
+  const handleManualStop = () => {
     const audio = audioRef.current;
     if (audio) {
-      const currentPosition = audio.currentTime;
-      audio.src = activeTrack.versions[version];
-      audio.load();
-      
-      const handleLoadedData = () => {
-        audio.currentTime = currentPosition;
-        if (isPlaying) {
-          audio.play().then(() => {
-            setIsRetrying(false);
-            setStatusMessage(null);
-            setConnectionQuality('good');
-          }).catch(() => {
-            setIsRetrying(false);
-            setShowRetryButton(true);
-            setStatusMessage('Falha na reconexão');
-          });
-        } else {
-          setIsRetrying(false);
-          setStatusMessage(null);
-        }
-        audio.removeEventListener('loadeddata', handleLoadedData);
-      };
-      
-      audio.addEventListener('loadeddata', handleLoadedData);
+      audio.pause();
+      audio.currentTime = 0;
+      setCurrentTime(0);
+      setIsPlaying(false);
+      setIsRetrying(false);
+      setShowRetryButton(false);
+      setStatusMessage('Reprodução interrompida pelo usuário');
+      setTimeout(() => setStatusMessage(null), 2000);
     }
   };
 
@@ -754,10 +790,25 @@ export function AudioPlayer({ categoryName, tracks, isOpen, onOpenChange }: Audi
             
             <div className="flex items-center justify-center gap-2">
                 {/* 🆕 NOVO: Botão de retry manual */}
-                {showRetryButton && (
-                  <Button onClick={handleManualRetry} variant="outline" size="sm" disabled={isRetrying}>
-                    {isRetrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Tentar Novamente'}
-                  </Button>
+                {(isRetrying || showRetryButton) && (
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleManualRetry}
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                    >
+                      Tentar Novamente
+                    </Button>
+                    <Button
+                      onClick={handleManualStop}
+                      size="sm"
+                      variant="destructive"
+                      className="text-xs"
+                    >
+                      Parar
+                    </Button>
+                  </div>
                 )}
                 
                 <Button 
